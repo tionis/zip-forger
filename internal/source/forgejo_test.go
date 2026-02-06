@@ -234,6 +234,72 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 	}
 }
 
+func TestForgejoOpenFileLFSFallback(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "token tok-123" && !strings.HasPrefix(r.URL.Path, "/lfs-download/") {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/assets/book.pdf":
+					return response(http.StatusOK, `version https://git-lfs.github.com/spec/v1
+oid sha256:deadbeef
+size 12345
+`), nil
+
+				case r.Method == http.MethodPost && r.URL.Path == "/acme/rules.git/info/lfs/objects/batch":
+					defer r.Body.Close()
+					raw, _ := io.ReadAll(r.Body)
+					if !strings.Contains(string(raw), `"oid":"deadbeef"`) {
+						return response(http.StatusBadRequest, `{"message":"missing oid"}`), nil
+					}
+					return response(http.StatusOK, `{
+  "objects":[
+    {
+      "oid":"deadbeef",
+      "actions":{
+        "download":{
+          "href":"http://forgejo.local/lfs-download/deadbeef",
+          "header":{"X-Test":"1"}
+        }
+      }
+    }
+  ]
+}`), nil
+
+				case r.Method == http.MethodGet && r.URL.Path == "/lfs-download/deadbeef":
+					if r.Header.Get("X-Test") != "1" {
+						return response(http.StatusForbidden, "missing header"), nil
+					}
+					return response(http.StatusOK, "real-binary-content"), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	reader, err := client.OpenFile(ctx, "acme", "rules", "main", "assets/book.pdf")
+	if err != nil {
+		t.Fatalf("OpenFile failed: %v", err)
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "real-binary-content" {
+		t.Fatalf("unexpected LFS fallback content: %q", string(body))
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {

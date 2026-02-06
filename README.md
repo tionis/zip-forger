@@ -136,4 +136,5 @@ Query filters for `download.zip`:
 
 - ZIP output is streamed directly and not persisted.
 - `Range` resume is not fully implemented yet.
+- Forgejo source mode detects Git LFS pointer files and resolves them through the LFS batch download flow.
 - Recursive tree listing falls back to Forgejo contents walk if tree responses are truncated.

@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -160,7 +161,21 @@ func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath st
 		resp.Body.Close()
 		return nil, fmt.Errorf("source: forgejo raw read failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return resp.Body, nil
+
+	reader := bufio.NewReaderSize(resp.Body, 8<<10)
+	pointer, isPointer := parseLFSPointer(reader)
+	if !isPointer {
+		return struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: reader,
+			Closer: resp.Body,
+		}, nil
+	}
+
+	resp.Body.Close()
+	return s.downloadLFSObject(ctx, owner, repo, pointer.OID, pointer.Size)
 }
 
 func (s *Forgejo) ListOwners(ctx context.Context) ([]string, error) {
@@ -326,6 +341,171 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 		return fmt.Errorf("source: forgejo upsert failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	return nil
+}
+
+type lfsPointer struct {
+	OID  string
+	Size int64
+}
+
+func parseLFSPointer(reader *bufio.Reader) (lfsPointer, bool) {
+	peek, err := reader.Peek(8 << 10)
+	if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
+		return lfsPointer{}, false
+	}
+
+	text := string(peek)
+	if !strings.HasPrefix(text, "version https://git-lfs.github.com/spec/v1") {
+		return lfsPointer{}, false
+	}
+
+	var pointer lfsPointer
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "oid sha256:"):
+			pointer.OID = strings.TrimPrefix(line, "oid sha256:")
+		case strings.HasPrefix(line, "size "):
+			size, parseErr := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(line, "size ")), 10, 64)
+			if parseErr == nil {
+				pointer.Size = size
+			}
+		}
+	}
+
+	if pointer.OID == "" {
+		return lfsPointer{}, false
+	}
+	return pointer, true
+}
+
+func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string, size int64) (io.ReadCloser, error) {
+	endpoint := fmt.Sprintf("%s/%s/%s.git/info/lfs/objects/batch",
+		s.baseURL,
+		url.PathEscape(owner),
+		url.PathEscape(repo),
+	)
+
+	body, err := json.Marshal(map[string]any{
+		"operation": "download",
+		"transfers": []string{"basic"},
+		"objects": []map[string]any{
+			{
+				"oid":  oid,
+				"size": size,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/vnd.git-lfs+json")
+	req.Header.Set("Accept", "application/vnd.git-lfs+json")
+	s.addAuthHeader(req, ctx)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return nil, ErrNotFound
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, ErrUnauthorized
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("source: lfs batch request failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
+
+	var batch struct {
+		Objects []struct {
+			OID   string `json:"oid"`
+			Error *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Actions map[string]struct {
+				Href   string            `json:"href"`
+				Header map[string]string `json:"header"`
+			} `json:"actions"`
+		} `json:"objects"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
+		return nil, fmt.Errorf("source: failed to decode lfs batch response: %w", err)
+	}
+
+	var object *struct {
+		OID   string `json:"oid"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Actions map[string]struct {
+			Href   string            `json:"href"`
+			Header map[string]string `json:"header"`
+		} `json:"actions"`
+	}
+	for idx := range batch.Objects {
+		if batch.Objects[idx].OID == oid {
+			object = &batch.Objects[idx]
+			break
+		}
+	}
+	if object == nil && len(batch.Objects) > 0 {
+		object = &batch.Objects[0]
+	}
+	if object == nil {
+		return nil, errors.New("source: lfs batch response did not include object")
+	}
+	if object.Error != nil {
+		return nil, fmt.Errorf("source: lfs object error code=%d message=%q", object.Error.Code, object.Error.Message)
+	}
+
+	downloadAction, ok := object.Actions["download"]
+	if !ok || strings.TrimSpace(downloadAction.Href) == "" {
+		return nil, errors.New("source: lfs download action missing")
+	}
+
+	downloadURL := downloadAction.Href
+	if parsed, parseErr := url.Parse(downloadURL); parseErr == nil && !parsed.IsAbs() {
+		base, _ := url.Parse(s.baseURL + "/")
+		downloadURL = base.ResolveReference(parsed).String()
+	}
+
+	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range downloadAction.Header {
+		downloadReq.Header.Set(key, value)
+	}
+
+	downloadResp, err := s.client.Do(downloadReq)
+	if err != nil {
+		return nil, err
+	}
+	if downloadResp.StatusCode == http.StatusNotFound {
+		downloadResp.Body.Close()
+		return nil, ErrNotFound
+	}
+	if downloadResp.StatusCode == http.StatusUnauthorized || downloadResp.StatusCode == http.StatusForbidden {
+		downloadResp.Body.Close()
+		return nil, ErrUnauthorized
+	}
+	if downloadResp.StatusCode >= http.StatusBadRequest {
+		errBody, _ := io.ReadAll(io.LimitReader(downloadResp.Body, 4<<10))
+		downloadResp.Body.Close()
+		return nil, fmt.Errorf("source: lfs download failed status=%d body=%q", downloadResp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
+	return downloadResp.Body, nil
 }
 
 func (s *Forgejo) getDefaultBranch(ctx context.Context, owner, repo string) (string, error) {
