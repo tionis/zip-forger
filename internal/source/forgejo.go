@@ -302,8 +302,10 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 		"message": message,
 		"content": base64.StdEncoding.EncodeToString(data),
 	}
+	method := http.MethodPost
 	if sha != "" {
 		requestPayload["sha"] = sha
+		method = http.MethodPut
 	}
 	body, err := json.Marshal(requestPayload)
 	if err != nil {
@@ -316,7 +318,7 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 		url.PathEscape(repo),
 		escapePath(filePath),
 	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -338,7 +340,7 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("source: forgejo upsert failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return fmt.Errorf("source: forgejo upsert failed method=%s status=%d body=%q", method, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	return nil
 }
@@ -524,23 +526,72 @@ func (s *Forgejo) getDefaultBranch(ctx context.Context, owner, repo string) (str
 }
 
 func (s *Forgejo) getCommitSHA(ctx context.Context, owner, repo, ref string) (string, error) {
-	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/commits/%s",
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("source: ref is required")
+	}
+
+	branchSHA, err := s.getBranchCommitSHA(ctx, owner, repo, ref)
+	if err == nil {
+		return branchSHA, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+
+	return s.getCommitSHAByQuery(ctx, owner, repo, ref)
+}
+
+func (s *Forgejo) getBranchCommitSHA(ctx context.Context, owner, repo, branch string) (string, error) {
+	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/branches/%s",
 		s.baseURL,
 		url.PathEscape(owner),
 		url.PathEscape(repo),
-		url.PathEscape(ref),
+		url.PathEscape(branch),
 	)
 	var payload struct {
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := s.getJSON(ctx, endpoint, &payload); err != nil {
+		return "", err
+	}
+
+	sha := strings.TrimSpace(payload.Commit.ID)
+	if sha == "" {
+		return "", errors.New("source: branch lookup returned empty commit id")
+	}
+	return sha, nil
+}
+
+func (s *Forgejo) getCommitSHAByQuery(ctx context.Context, owner, repo, ref string) (string, error) {
+	query := url.Values{}
+	query.Set("sha", ref)
+	query.Set("page", "1")
+	query.Set("limit", "1")
+	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/commits?%s",
+		s.baseURL,
+		url.PathEscape(owner),
+		url.PathEscape(repo),
+		query.Encode(),
+	)
+
+	var payload []struct {
 		SHA string `json:"sha"`
 	}
 	if err := s.getJSON(ctx, endpoint, &payload); err != nil {
 		return "", err
 	}
-	payload.SHA = strings.TrimSpace(payload.SHA)
-	if payload.SHA == "" {
-		return "", errors.New("source: commit lookup returned empty SHA")
+	if len(payload) == 0 {
+		return "", ErrNotFound
 	}
-	return payload.SHA, nil
+
+	sha := strings.TrimSpace(payload[0].SHA)
+	if sha == "" {
+		return "", errors.New("source: commit query returned empty sha")
+	}
+	return sha, nil
 }
 
 type treeResponse struct {

@@ -24,8 +24,8 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules":
 					return response(http.StatusOK, `{"default_branch":"main"}`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/commits/main":
-					return response(http.StatusOK, `{"sha":"commit-sha"}`), nil
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/branches/main":
+					return response(http.StatusOK, `{"commit":{"id":"commit-sha"}}`), nil
 
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
 					return response(http.StatusOK, `{
@@ -100,6 +100,44 @@ func TestForgejoUnauthorized(t *testing.T) {
 	_, err = client.ResolveRef(context.Background(), "acme", "rules", "main")
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestForgejoResolveRefFallsBackToCommitQuery(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "token tok-123" {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/branches/release-2024":
+					return response(http.StatusNotFound, `{"message":"branch not found"}`), nil
+
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/commits":
+					query := r.URL.Query()
+					if query.Get("sha") != "release-2024" || query.Get("page") != "1" || query.Get("limit") != "1" {
+						return response(http.StatusBadRequest, `{"message":"unexpected query"}`), nil
+					}
+					return response(http.StatusOK, `[{"sha":"commit-from-query"}]`), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	commit, err := client.ResolveRef(ctx, "acme", "rules", "release-2024")
+	if err != nil {
+		t.Fatalf("ResolveRef failed: %v", err)
+	}
+	if commit != "commit-from-query" {
+		t.Fatalf("unexpected commit: %q", commit)
 	}
 }
 
@@ -229,6 +267,52 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 		t.Fatalf("unexpected sha payload: %#v", putPayload)
 	}
 	content, _ := putPayload["content"].(string)
+	if content != base64.StdEncoding.EncodeToString(configYAML) {
+		t.Fatalf("unexpected base64 payload content: %q", content)
+	}
+}
+
+func TestForgejoUpsertFileCreatesWithPost(t *testing.T) {
+	var postPayload map[string]any
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "token tok-123" {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/contents/.zip-forger.yaml":
+					return response(http.StatusNotFound, `{"message":"not found"}`), nil
+
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/acme/rules/contents/.zip-forger.yaml":
+					defer r.Body.Close()
+					raw, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(raw, &postPayload)
+					return response(http.StatusCreated, `{"ok":true}`), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	configYAML := []byte("version: 1\n")
+	if err := client.UpsertFile(ctx, "acme", "rules", "main", ".zip-forger.yaml", configYAML, "create"); err != nil {
+		t.Fatalf("UpsertFile failed: %v", err)
+	}
+
+	if postPayload["branch"] != "main" {
+		t.Fatalf("unexpected branch payload: %#v", postPayload)
+	}
+	if _, ok := postPayload["sha"]; ok {
+		t.Fatalf("create payload should not include sha: %#v", postPayload)
+	}
+	content, _ := postPayload["content"].(string)
 	if content != base64.StdEncoding.EncodeToString(configYAML) {
 		t.Fatalf("unexpected base64 payload content: %q", content)
 	}
