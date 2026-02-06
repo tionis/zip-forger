@@ -10,7 +10,7 @@ Current stage:
 - Web UI at `/`
 - UI theme switch (`system`, `light`, `dark`)
 - Searchable owner/repository/branch inputs
-- Preset editor (create/edit/delete/save)
+- Preset and options editor (create/edit/delete/save, ad-hoc + max file/byte limits)
 - Preview tree view with selected files
 - Shareable direct download URL copy action
 - Preview and config APIs

@@ -519,6 +519,15 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               <input id="allowAdhocFilters" type="checkbox" />
               Allow ad-hoc filters
             </label>
+            <div class="row-2">
+              <label>Max files per download
+                <input id="maxFilesPerDownload" type="number" min="0" step="1" placeholder="0 = unlimited" />
+              </label>
+              <label>Max bytes per download
+                <input id="maxBytesPerDownload" type="number" min="0" step="1" placeholder="0 = unlimited" />
+              </label>
+            </div>
+            <p class="hint">Optional limits from <code>.zip-forger.yaml</code>. Leave empty or set <code>0</code> for no limit.</p>
             <div class="actions">
               <button class="ghost" id="addPresetBtn" type="button">Add preset</button>
               <button class="primary" id="saveConfigBtn" type="button">Save config</button>
@@ -595,6 +604,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         logoutBtn: document.getElementById("logoutBtn"),
         themeButtons: Array.from(document.querySelectorAll("[data-theme]")),
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
+        maxFilesPerDownload: document.getElementById("maxFilesPerDownload"),
+        maxBytesPerDownload: document.getElementById("maxBytesPerDownload"),
         addPresetBtn: document.getElementById("addPresetBtn"),
         saveConfigBtn: document.getElementById("saveConfigBtn"),
         presetList: document.getElementById("presetList")
@@ -762,6 +773,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
         nodes.commitValue.textContent = payload.commit || "-";
         nodes.allowAdhocFilters.checked = state.config.options.allowAdhocFilters !== false;
+        nodes.maxFilesPerDownload.value = formatLimitValue(state.config.options.maxFilesPerDownload);
+        nodes.maxBytesPerDownload.value = formatLimitValue(state.config.options.maxBytesPerDownload);
         nodes.useAdhoc.disabled = state.config.options.allowAdhocFilters === false;
         if (nodes.useAdhoc.disabled) {
           nodes.useAdhoc.checked = false;
@@ -899,7 +912,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (!state.config.options) {
           state.config.options = {};
         }
+        const maxSafeInteger = Number.MAX_SAFE_INTEGER;
         state.config.options.allowAdhocFilters = nodes.allowAdhocFilters.checked;
+        state.config.options.maxFilesPerDownload = parseLimitInput(nodes.maxFilesPerDownload.value, "Max files per download", maxSafeInteger);
+        state.config.options.maxBytesPerDownload = parseLimitInput(nodes.maxBytesPerDownload.value, "Max bytes per download", maxSafeInteger);
         state.config.presets = state.config.presets || [];
 
         const seen = new Set();
@@ -1110,6 +1126,32 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           index += 1;
         }
         return size.toFixed(index === 0 ? 0 : size < 10 ? 2 : 1) + " " + units[index];
+      }
+
+      function formatLimitValue(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric <= 0) {
+          return "";
+        }
+        return String(Math.floor(numeric));
+      }
+
+      function parseLimitInput(value, fieldName, maxValue) {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) {
+          return 0;
+        }
+        if (!/^[0-9]+$/.test(trimmed)) {
+          throw new Error(fieldName + " must be a whole number >= 0.");
+        }
+        const parsed = Number(trimmed);
+        if (!Number.isSafeInteger(parsed) || parsed < 0) {
+          throw new Error(fieldName + " must be a whole number >= 0.");
+        }
+        if (parsed > maxValue) {
+          throw new Error(fieldName + " is too large.");
+        }
+        return parsed;
       }
 
       function setMessage(text, level) {

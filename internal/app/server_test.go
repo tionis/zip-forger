@@ -154,7 +154,11 @@ presets:
   "ref":"main",
   "config":{
     "version":1,
-    "options":{"allowAdhocFilters":true},
+    "options":{
+      "allowAdhocFilters":true,
+      "maxFilesPerDownload":123,
+      "maxBytesPerDownload":456789
+    },
     "presets":[
       {"id":"all-pdf","includeGlobs":["**/*.pdf"]}
     ]
@@ -176,7 +180,9 @@ presets:
 	var cfgPayload2 struct {
 		Config struct {
 			Options struct {
-				AllowAdhocFilters bool `json:"allowAdhocFilters"`
+				AllowAdhocFilters   bool  `json:"allowAdhocFilters"`
+				MaxFilesPerDownload int   `json:"maxFilesPerDownload"`
+				MaxBytesPerDownload int64 `json:"maxBytesPerDownload"`
 			} `json:"options"`
 			Presets []struct {
 				ID string `json:"id"`
@@ -188,6 +194,12 @@ presets:
 	}
 	if !cfgPayload2.Config.Options.AllowAdhocFilters {
 		t.Fatalf("expected allowAdhocFilters=true after update")
+	}
+	if cfgPayload2.Config.Options.MaxFilesPerDownload != 123 {
+		t.Fatalf("expected maxFilesPerDownload=123, got %d", cfgPayload2.Config.Options.MaxFilesPerDownload)
+	}
+	if cfgPayload2.Config.Options.MaxBytesPerDownload != 456789 {
+		t.Fatalf("expected maxBytesPerDownload=456789, got %d", cfgPayload2.Config.Options.MaxBytesPerDownload)
 	}
 	if len(cfgPayload2.Config.Presets) != 1 || cfgPayload2.Config.Presets[0].ID != "all-pdf" {
 		t.Fatalf("unexpected presets after update: %#v", cfgPayload2.Config.Presets)
