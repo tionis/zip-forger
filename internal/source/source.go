@@ -1,0 +1,26 @@
+package source
+
+import (
+	"context"
+	"errors"
+	"io"
+)
+
+var ErrNotFound = errors.New("source: not found")
+var ErrUnauthorized = errors.New("source: unauthorized")
+
+type Entry struct {
+	Path string
+	Size int64
+}
+
+type RepositorySource interface {
+	ResolveRef(ctx context.Context, owner, repo, ref string) (string, error)
+	ReadFile(ctx context.Context, owner, repo, commit, filePath string) ([]byte, error)
+	ListFiles(ctx context.Context, owner, repo, commit string) ([]Entry, error)
+	OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error)
+	ListOwners(ctx context.Context) ([]string, error)
+	ListRepos(ctx context.Context, owner string) ([]string, error)
+	ListBranches(ctx context.Context, owner, repo string) ([]string, error)
+	UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message string) error
+}

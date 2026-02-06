@@ -1,0 +1,13 @@
+version: 1
+options:
+  allowAdhocFilters: true
+  maxFilesPerDownload: 10000
+presets:
+  - id: core-pdfs
+    description: Core rules PDFs
+    includeGlobs:
+      - "rules/core/**/*.pdf"
+  - id: notes
+    description: Session notes
+    includeGlobs:
+      - "session-notes/**/*.md"
