@@ -813,6 +813,10 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 	case http.StatusNotFound:
 		return ErrNotFound
 	case http.StatusUnauthorized, http.StatusForbidden:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if len(bytes.TrimSpace(body)) > 0 {
+			return fmt.Errorf("%w: forgejo %d: %s", ErrUnauthorized, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
 		return ErrUnauthorized
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
@@ -831,8 +835,9 @@ func (s *Forgejo) addAuthHeader(req *http.Request, ctx context.Context) {
 	if !ok {
 		return
 	}
-	// Forgejo accepts OAuth/PAT tokens via the legacy "token" scheme.
-	req.Header.Set("Authorization", "token "+token)
+	// Use Bearer scheme for OAuth2 access tokens (Forgejo also accepts "token"
+	// for PATs, but Bearer is correct for OAuth2 and works for both).
+	req.Header.Set("Authorization", "Bearer "+token)
 }
 
 func escapePath(value string) string {

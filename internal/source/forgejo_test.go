@@ -16,7 +16,7 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -108,7 +108,7 @@ func TestForgejoResolveRefFallsBackToCommitQuery(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -146,7 +146,7 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -195,7 +195,7 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -278,7 +278,7 @@ func TestForgejoUpsertFileCreatesWithPost(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -323,7 +323,7 @@ func TestForgejoOpenFileLFSFallback(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" && !strings.HasPrefix(r.URL.Path, "/lfs-download/") {
+				if r.Header.Get("Authorization") != "Bearer tok-123" && !strings.HasPrefix(r.URL.Path, "/lfs-download/") {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
@@ -389,7 +389,7 @@ func TestForgejoLFSRejectsOIDMismatch(t *testing.T) {
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "token tok-123" {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
