@@ -773,14 +773,19 @@ func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath 
 }
 
 func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
-	// /user/repos requires read:user scope which OAuth apps may not have.
-	// Instead: try /api/v1/user to get the current user's numeric ID, then
-	// use uid=X in /repos/search so Forgejo returns repos specifically
-	// accessible to that user (owned + org + collaborative). If the /user
-	// call fails, fall back to unfiltered search + explicit collaborative
-	// mode as a best-effort.
-	uid := s.currentUserID(ctx)
+	// Preferred path: /user/repos returns every repo the token owner can
+	// access (personal + org + collaborative) and requires read:user scope.
+	repos, err := s.fetchUserRepos(ctx)
+	if err == nil {
+		return repos, nil
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		return nil, err
+	}
 
+	// Fallback when read:user scope is not available: stitch together results
+	// from /repos/search using the modes Forgejo supports.
+	uid := s.currentUserID(ctx)
 	seen := make(map[string]struct{})
 	var out []repoSummary
 	for _, mode := range []string{"", "collaborative", "member"} {
@@ -802,9 +807,32 @@ func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
 	return out, nil
 }
 
-// currentUserID fetches the authenticated user's numeric ID via /api/v1/user.
-// Returns 0 if the call fails (e.g. insufficient scope); callers treat 0 as
-// "no uid filter".
+// fetchUserRepos calls /api/v1/user/repos — the canonical "all my repos"
+// endpoint. Requires read:user OAuth scope.
+func (s *Forgejo) fetchUserRepos(ctx context.Context) ([]repoSummary, error) {
+	const pageLimit = 100
+	page := 1
+	var out []repoSummary
+	for {
+		query := url.Values{}
+		query.Set("page", strconv.Itoa(page))
+		query.Set("limit", strconv.Itoa(pageLimit))
+		endpoint := s.baseURL + "/api/v1/user/repos?" + query.Encode()
+		var payload []repoSummary
+		if err := s.getJSON(ctx, endpoint, &payload); err != nil {
+			return nil, err
+		}
+		out = append(out, payload...)
+		if len(payload) < pageLimit {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
+// currentUserID fetches the current user's numeric ID via /api/v1/user.
+// Returns 0 on failure; callers treat 0 as "no uid filter".
 func (s *Forgejo) currentUserID(ctx context.Context) int64 {
 	var me struct {
 		ID int64 `json:"id"`
@@ -817,7 +845,6 @@ func (s *Forgejo) searchRepos(ctx context.Context, mode string, uid int64) ([]re
 	const pageLimit = 100
 	page := 1
 	var out []repoSummary
-
 	for {
 		query := url.Values{}
 		query.Set("page", strconv.Itoa(page))
@@ -829,7 +856,6 @@ func (s *Forgejo) searchRepos(ctx context.Context, mode string, uid int64) ([]re
 			query.Set("uid", strconv.FormatInt(uid, 10))
 		}
 		endpoint := s.baseURL + "/api/v1/repos/search?" + query.Encode()
-
 		var payload struct {
 			Data []repoSummary `json:"data"`
 		}
