@@ -22,46 +22,46 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f1e4;
-      --bg-accent: #ece3cf;
-      --surface: rgba(255, 255, 255, 0.82);
-      --surface-alt: rgba(255, 255, 255, 0.56);
-      --text: #1a2722;
-      --text-secondary: #3d4f48;
-      --muted: #6b7d76;
-      --line: rgba(22, 35, 31, 0.15);
-      --line-strong: rgba(22, 35, 31, 0.28);
-      --brand: #2f7352;
-      --brand-strong: #1e4f39;
-      --brand-soft: rgba(47, 115, 82, 0.08);
+      --bg: #f4f4f6;
+      --bg-accent: #eaeaee;
+      --surface: rgba(255, 255, 255, 0.85);
+      --surface-alt: rgba(255, 255, 255, 0.58);
+      --text: #18181f;
+      --text-secondary: #3a3a4a;
+      --muted: #6b6b80;
+      --line: rgba(24, 24, 40, 0.13);
+      --line-strong: rgba(24, 24, 40, 0.24);
+      --brand: #4361b8;
+      --brand-strong: #2d4a9e;
+      --brand-soft: rgba(67, 97, 184, 0.08);
       --warn: #9f6324;
       --danger: #9e2f3a;
       --danger-soft: rgba(158, 47, 58, 0.08);
-      --shadow: 0 1px 3px rgba(30, 45, 38, 0.06), 0 8px 32px rgba(30, 45, 38, 0.1);
-      --shadow-lg: 0 4px 12px rgba(30, 45, 38, 0.08), 0 20px 48px rgba(30, 45, 38, 0.14);
+      --shadow: 0 1px 3px rgba(20, 20, 40, 0.06), 0 8px 32px rgba(20, 20, 40, 0.1);
+      --shadow-lg: 0 4px 12px rgba(20, 20, 40, 0.08), 0 20px 48px rgba(20, 20, 40, 0.13);
       --radius: 12px;
       --radius-sm: 8px;
     }
 
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #0f1613;
-      --bg-accent: #1a2420;
-      --surface: rgba(28, 40, 35, 0.85);
-      --surface-alt: rgba(22, 32, 28, 0.65);
-      --text: #e8f0ed;
-      --text-secondary: #bfcdc7;
-      --muted: #8a9e96;
-      --line: rgba(202, 223, 216, 0.14);
-      --line-strong: rgba(202, 223, 216, 0.25);
-      --brand: #58ad84;
-      --brand-strong: #7bc39d;
-      --brand-soft: rgba(88, 173, 132, 0.1);
+      --bg: #111118;
+      --bg-accent: #1c1c26;
+      --surface: rgba(30, 30, 44, 0.88);
+      --surface-alt: rgba(22, 22, 34, 0.68);
+      --text: #e6e6f0;
+      --text-secondary: #b8b8cc;
+      --muted: #7878a0;
+      --line: rgba(200, 200, 230, 0.13);
+      --line-strong: rgba(200, 200, 230, 0.24);
+      --brand: #7b9cf4;
+      --brand-strong: #99b4f8;
+      --brand-soft: rgba(123, 156, 244, 0.1);
       --warn: #e2a765;
       --danger: #f48e9a;
       --danger-soft: rgba(244, 142, 154, 0.1);
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 8px 32px rgba(0, 0, 0, 0.28);
-      --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.16), 0 20px 48px rgba(0, 0, 0, 0.36);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.14), 0 8px 32px rgba(0, 0, 0, 0.3);
+      --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.18), 0 20px 48px rgba(0, 0, 0, 0.38);
     }
 
     * { box-sizing: border-box; margin: 0; }
@@ -290,7 +290,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
     input:focus, select:focus, textarea:focus {
       border-color: var(--brand);
-      box-shadow: 0 0 0 2px rgba(88, 173, 132, 0.18);
+      box-shadow: 0 0 0 2px rgba(67, 97, 184, 0.18);
     }
 
     textarea {
@@ -381,7 +381,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       letter-spacing: 0.2px;
     }
 
-    :root[data-theme="dark"] .btn-download { background: var(--brand); color: #0f1613; }
+    :root[data-theme="dark"] .btn-download { background: var(--brand); color: #111118; }
 
     /* ---- Message ---- */
     .message {
