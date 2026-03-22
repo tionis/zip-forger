@@ -200,6 +200,9 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 				}
 
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/user":
+					return response(http.StatusOK, `{"id":42,"login":"acme"}`), nil
+
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/search":
 					switch r.URL.Query().Get("mode") {
 					case "collaborative":

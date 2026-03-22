@@ -774,16 +774,19 @@ func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath 
 
 func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
 	// /user/repos requires read:user scope which OAuth apps may not have.
-	// Cover all access relationships by querying each mode separately:
-	//   ""             – repos visible to the token (owned + public)
-	//   "collaborative" – repos where user is an explicit collaborator
-	//   "member"       – repos accessible via org team membership
+	// Instead: try /api/v1/user to get the current user's numeric ID, then
+	// use uid=X in /repos/search so Forgejo returns repos specifically
+	// accessible to that user (owned + org + collaborative). If the /user
+	// call fails, fall back to unfiltered search + explicit collaborative
+	// mode as a best-effort.
+	uid := s.currentUserID(ctx)
+
 	seen := make(map[string]struct{})
 	var out []repoSummary
 	for _, mode := range []string{"", "collaborative", "member"} {
-		results, err := s.searchRepos(ctx, mode)
+		results, err := s.searchRepos(ctx, mode, uid)
 		if errors.Is(err, ErrUnsupportedSearchMode) {
-			continue // this Forgejo version doesn't support the mode, skip it
+			continue
 		}
 		if err != nil {
 			return nil, err
@@ -799,7 +802,18 @@ func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
 	return out, nil
 }
 
-func (s *Forgejo) searchRepos(ctx context.Context, mode string) ([]repoSummary, error) {
+// currentUserID fetches the authenticated user's numeric ID via /api/v1/user.
+// Returns 0 if the call fails (e.g. insufficient scope); callers treat 0 as
+// "no uid filter".
+func (s *Forgejo) currentUserID(ctx context.Context) int64 {
+	var me struct {
+		ID int64 `json:"id"`
+	}
+	_ = s.getJSON(ctx, s.baseURL+"/api/v1/user", &me)
+	return me.ID
+}
+
+func (s *Forgejo) searchRepos(ctx context.Context, mode string, uid int64) ([]repoSummary, error) {
 	const pageLimit = 100
 	page := 1
 	var out []repoSummary
@@ -810,6 +824,9 @@ func (s *Forgejo) searchRepos(ctx context.Context, mode string) ([]repoSummary, 
 		query.Set("limit", strconv.Itoa(pageLimit))
 		if mode != "" {
 			query.Set("mode", mode)
+		}
+		if uid > 0 {
+			query.Set("uid", strconv.FormatInt(uid, 10))
 		}
 		endpoint := s.baseURL + "/api/v1/repos/search?" + query.Encode()
 
