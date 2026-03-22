@@ -116,13 +116,62 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
     .auth-badge {
       font-size: 0.78rem;
+      font-weight: 500;
       color: var(--muted);
-      padding: 4px 10px;
+      padding: 4px 10px 4px 8px;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: var(--surface-alt);
       white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
+
+    .auth-badge::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .auth-badge.state-signed-in {
+      color: #1a6e3c;
+      border-color: rgba(26, 110, 60, 0.3);
+      background: rgba(26, 110, 60, 0.07);
+    }
+    .auth-badge.state-signed-in::before { background: #2a9955; }
+
+    :root[data-theme="dark"] .auth-badge.state-signed-in {
+      color: #6ddb96;
+      border-color: rgba(109, 219, 150, 0.25);
+      background: rgba(109, 219, 150, 0.08);
+    }
+    :root[data-theme="dark"] .auth-badge.state-signed-in::before { background: #6ddb96; }
+
+    .auth-badge.state-warning {
+      color: #7a4d0f;
+      border-color: rgba(122, 77, 15, 0.3);
+      background: rgba(122, 77, 15, 0.07);
+    }
+    .auth-badge.state-warning::before { background: var(--warn); }
+
+    :root[data-theme="dark"] .auth-badge.state-warning {
+      color: var(--warn);
+      border-color: rgba(226, 167, 101, 0.25);
+      background: rgba(226, 167, 101, 0.08);
+    }
+    :root[data-theme="dark"] .auth-badge.state-warning::before { background: var(--warn); }
+
+    .auth-badge.state-error {
+      color: var(--danger);
+      border-color: rgba(158, 47, 58, 0.3);
+      background: var(--danger-soft);
+    }
+    .auth-badge.state-error::before { background: var(--danger); }
 
     .auth-banner {
       display: none;
@@ -878,11 +927,18 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       /* ---- Auth ---- */
+      function setAuthBadge(text, stateClass) {
+        nodes.authBadge.textContent = text;
+        nodes.authBadge.className = "auth-badge" + (stateClass ? " " + stateClass : "");
+      }
+
       async function hydrateAuth() {
         if (!AUTH_ENABLED) {
-          nodes.authBadge.textContent = AUTH_REQUIRED ? "auth required" : "no auth";
           if (AUTH_REQUIRED) {
+            setAuthBadge("sign in required", "state-error");
             nodes.authBanner.classList.add("visible");
+          } else {
+            setAuthBadge("no auth");
           }
           return;
         }
@@ -895,17 +951,17 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         try {
           const payload = await apiFetch("/auth/me", { credentials: "same-origin" });
           if (payload.authenticated) {
-            nodes.authBadge.textContent = "signed in";
+            setAuthBadge("signed in", "state-signed-in");
             nodes.logoutBtn.hidden = false;
             nodes.loginBtn.hidden = true;
+          } else if (AUTH_REQUIRED) {
+            setAuthBadge("sign in required", "state-error");
+            nodes.authBanner.classList.add("visible");
           } else {
-            nodes.authBadge.textContent = AUTH_REQUIRED ? "sign in required" : "not signed in";
-            if (AUTH_REQUIRED) {
-              nodes.authBanner.classList.add("visible");
-            }
+            setAuthBadge("not signed in", "state-warning");
           }
         } catch (_err) {
-          nodes.authBadge.textContent = "auth error";
+          setAuthBadge("auth unavailable", "state-error");
           if (AUTH_REQUIRED) {
             nodes.authBanner.classList.add("visible");
           }
