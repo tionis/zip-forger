@@ -384,6 +384,53 @@ size 12345
 	}
 }
 
+func TestForgejoLFSRejectsOIDMismatch(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "token tok-123" {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/assets/big.bin":
+					return response(http.StatusOK, "version https://git-lfs.github.com/spec/v1\noid sha256:aaaa1111\nsize 999\n"), nil
+
+				case r.Method == http.MethodPost && r.URL.Path == "/acme/rules.git/info/lfs/objects/batch":
+					// Return an object with a DIFFERENT OID than requested
+					return response(http.StatusOK, `{
+  "objects":[
+    {
+      "oid":"wrong-oid-bbbb2222",
+      "actions":{
+        "download":{
+          "href":"http://forgejo.local/lfs-download/wrong",
+          "header":{}
+        }
+      }
+    }
+  ]
+}`), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	_, err = client.OpenFile(ctx, "acme", "rules", "main", "assets/big.bin")
+	if err == nil {
+		t.Fatal("expected error when LFS batch returns mismatched OID, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not include object") {
+		t.Fatalf("expected 'did not include object' error, got: %v", err)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {

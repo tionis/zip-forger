@@ -374,14 +374,15 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	streamErr := zipstream.Stream(r.Context(), w, sel.Manifest.Entries, func(ctx context.Context, filePath string) (io.ReadCloser, error) {
-		reader, err := s.source.OpenFile(ctx, owner, repo, sel.Commit, filePath)
-		if err != nil {
+		return s.source.OpenFile(ctx, owner, repo, sel.Commit, filePath)
+	}, &zipstream.Options{
+		OnFileError: func(path string, err error) error {
 			if errors.Is(err, source.ErrNotFound) {
-				return nil, fmt.Errorf("file disappeared from source during stream: %s", filePath)
+				s.logger.Printf("stream skip missing file owner=%s repo=%s commit=%s path=%s", owner, repo, sel.Commit, path)
+				return nil
 			}
-			return nil, err
-		}
-		return reader, nil
+			return err
+		},
 	})
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		s.logger.Printf("stream failed owner=%s repo=%s commit=%s err=%v", owner, repo, sel.Commit, streamErr)

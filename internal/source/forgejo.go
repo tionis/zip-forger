@@ -461,9 +461,6 @@ func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string
 			break
 		}
 	}
-	if object == nil && len(batch.Objects) > 0 {
-		object = &batch.Objects[0]
-	}
 	if object == nil {
 		return nil, errors.New("source: lfs batch response did not include object")
 	}

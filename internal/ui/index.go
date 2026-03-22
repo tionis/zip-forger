@@ -16,93 +16,136 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>zip-forger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=Fraunces:opsz,wght@9..144,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     :root {
       color-scheme: light;
-      --bg: #faf5e8;
+      --bg: #f6f1e4;
       --bg-accent: #ece3cf;
-      --surface: rgba(255, 255, 255, 0.86);
-      --surface-alt: rgba(255, 255, 255, 0.68);
-      --text: #16231f;
-      --muted: #54635d;
-      --line: rgba(22, 35, 31, 0.2);
+      --surface: rgba(255, 255, 255, 0.82);
+      --surface-alt: rgba(255, 255, 255, 0.56);
+      --text: #1a2722;
+      --text-secondary: #3d4f48;
+      --muted: #6b7d76;
+      --line: rgba(22, 35, 31, 0.15);
+      --line-strong: rgba(22, 35, 31, 0.28);
       --brand: #2f7352;
       --brand-strong: #1e4f39;
+      --brand-soft: rgba(47, 115, 82, 0.08);
       --warn: #9f6324;
       --danger: #9e2f3a;
-      --shadow: 0 16px 44px rgba(30, 45, 38, 0.14);
-      --radius: 14px;
+      --danger-soft: rgba(158, 47, 58, 0.08);
+      --shadow: 0 1px 3px rgba(30, 45, 38, 0.06), 0 8px 32px rgba(30, 45, 38, 0.1);
+      --shadow-lg: 0 4px 12px rgba(30, 45, 38, 0.08), 0 20px 48px rgba(30, 45, 38, 0.14);
+      --radius: 12px;
+      --radius-sm: 8px;
     }
 
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #121a17;
-      --bg-accent: #1f2b26;
-      --surface: rgba(25, 35, 31, 0.88);
-      --surface-alt: rgba(18, 26, 23, 0.7);
-      --text: #eaf2ef;
-      --muted: #a7b9b3;
-      --line: rgba(202, 223, 216, 0.22);
+      --bg: #0f1613;
+      --bg-accent: #1a2420;
+      --surface: rgba(28, 40, 35, 0.85);
+      --surface-alt: rgba(22, 32, 28, 0.65);
+      --text: #e8f0ed;
+      --text-secondary: #bfcdc7;
+      --muted: #8a9e96;
+      --line: rgba(202, 223, 216, 0.14);
+      --line-strong: rgba(202, 223, 216, 0.25);
       --brand: #58ad84;
       --brand-strong: #7bc39d;
+      --brand-soft: rgba(88, 173, 132, 0.1);
       --warn: #e2a765;
       --danger: #f48e9a;
-      --shadow: 0 18px 44px rgba(0, 0, 0, 0.44);
+      --danger-soft: rgba(244, 142, 154, 0.1);
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 8px 32px rgba(0, 0, 0, 0.28);
+      --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.16), 0 20px 48px rgba(0, 0, 0, 0.36);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; margin: 0; }
 
     body {
-      margin: 0;
-      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      font-family: "DM Sans", "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
       color: var(--text);
-      background:
-        radial-gradient(circle at 5% 10%, rgba(209, 216, 176, 0.58), rgba(209, 216, 176, 0) 30%),
-        radial-gradient(circle at 92% 8%, rgba(247, 195, 128, 0.36), rgba(247, 195, 128, 0) 28%),
-        linear-gradient(140deg, var(--bg), var(--bg-accent));
+      background: var(--bg);
       min-height: 100vh;
     }
 
     .frame {
-      max-width: 1200px;
+      max-width: 1280px;
       margin: 0 auto;
-      padding: 26px 18px 44px;
-      animation: reveal 320ms ease-out;
+      padding: 20px 20px 48px;
+      animation: reveal 280ms ease-out;
     }
 
+    /* ---- Header ---- */
     .header {
       display: flex;
       justify-content: space-between;
-      gap: 14px;
-      align-items: flex-start;
+      align-items: center;
+      gap: 12px;
       flex-wrap: wrap;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
     }
 
     .title {
-      margin: 0;
-      font-family: "Fraunces", "Georgia", serif;
-      font-size: clamp(2rem, 3.6vw, 2.9rem);
+      font-family: "Fraunces", Georgia, serif;
+      font-size: 1.6rem;
+      font-weight: 600;
       line-height: 1;
       color: var(--brand-strong);
     }
 
-    .subtitle {
-      margin: 8px 0 0;
-      color: var(--muted);
-      max-width: 70ch;
+    :root[data-theme="dark"] .title { color: var(--brand); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
-    .theme {
+    .auth-badge {
+      font-size: 0.78rem;
+      color: var(--muted);
+      padding: 4px 10px;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: var(--surface-alt);
-      padding: 4px;
+      white-space: nowrap;
+    }
+
+    .auth-banner {
+      display: none;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--danger-soft);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      font-size: 0.88rem;
+      margin-bottom: 12px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .auth-banner.visible { display: flex; }
+
+    .theme-toggle {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-alt);
+      padding: 3px;
       display: inline-flex;
-      gap: 4px;
-      align-self: flex-start;
+      gap: 2px;
     }
 
     .theme-btn {
@@ -110,75 +153,99 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       border-radius: 999px;
       background: transparent;
       color: var(--muted);
-      padding: 6px 10px;
+      padding: 4px 9px;
       cursor: pointer;
-      font-size: 0.88rem;
-      transition: background 130ms ease, color 130ms ease;
+      font-size: 0.76rem;
+      font-family: inherit;
+      transition: background 120ms, color 120ms;
     }
 
     .theme-btn.active {
       color: #fff;
-      background: linear-gradient(145deg, var(--brand), var(--brand-strong));
+      background: var(--brand);
     }
 
-    .status {
+    /* ---- Tabs ---- */
+    .tab-bar {
       display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      padding: 11px 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--surface-alt);
+      gap: 2px;
+      border-bottom: 1px solid var(--line);
       margin-bottom: 16px;
     }
 
-    .pill {
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 5px 10px;
+    .tab-btn {
+      border: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      background: transparent;
       color: var(--muted);
-      font-size: 0.9rem;
-      background: var(--surface);
+      padding: 10px 18px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: color 120ms, border-color 120ms;
+      min-height: auto;
     }
 
-    .status .actions {
-      margin-left: auto;
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
+    .tab-btn:hover {
+      color: var(--text-secondary);
+      transform: none;
+      filter: none;
     }
 
-    .layout {
-      display: grid;
-      grid-template-columns: 1.15fr 1fr;
-      gap: 14px;
+    .tab-btn.active {
+      color: var(--brand-strong);
+      border-bottom-color: var(--brand);
     }
 
-    .stack {
-      display: grid;
-      gap: 14px;
+    :root[data-theme="dark"] .tab-btn.active {
+      color: var(--brand);
     }
 
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ---- Cards ---- */
     .card {
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--surface);
       box-shadow: var(--shadow);
       padding: 16px;
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(6px);
     }
 
-    .card h2 {
-      margin: 0 0 12px;
-      font-size: 1.14rem;
-      letter-spacing: 0.25px;
+    .card-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
     }
 
-    .grid {
+    /* ---- Layout ---- */
+    .dl-layout {
       display: grid;
-      gap: 10px;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+      align-items: start;
     }
+
+    .dl-sidebar {
+      display: grid;
+      gap: 12px;
+      position: sticky;
+      top: 20px;
+    }
+
+    .dl-main {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid { display: grid; gap: 10px; }
 
     .row-2 {
       display: grid;
@@ -192,176 +259,229 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
+    /* ---- Forms ---- */
     label {
       display: grid;
-      gap: 5px;
-      font-size: 0.9rem;
+      gap: 4px;
+      font-size: 0.82rem;
+      font-weight: 500;
       color: var(--muted);
     }
 
-    input, select, textarea, button {
-      font: inherit;
-    }
+    input, select, textarea, button { font: inherit; }
 
     input, select, textarea {
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 9px 10px;
-      background: rgba(255, 255, 255, 0.75);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      background: rgba(255, 255, 255, 0.7);
       color: var(--text);
       outline: none;
-      transition: border-color 120ms ease, box-shadow 120ms ease;
+      font-size: 0.88rem;
+      transition: border-color 100ms, box-shadow 100ms;
     }
 
     :root[data-theme="dark"] input,
     :root[data-theme="dark"] select,
     :root[data-theme="dark"] textarea {
-      background: rgba(16, 23, 20, 0.85);
+      background: rgba(12, 18, 16, 0.75);
     }
 
     input:focus, select:focus, textarea:focus {
       border-color: var(--brand);
-      box-shadow: 0 0 0 3px rgba(88, 173, 132, 0.2);
+      box-shadow: 0 0 0 2px rgba(88, 173, 132, 0.18);
     }
 
     textarea {
-      min-height: 78px;
+      min-height: 62px;
       resize: vertical;
-      line-height: 1.33;
+      line-height: 1.4;
     }
 
     .check {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
+      font-size: 0.86rem;
       color: var(--muted);
-      font-size: 0.92rem;
     }
 
-    .check input {
-      width: auto;
-      margin: 0;
-    }
+    .check input { width: auto; margin: 0; }
 
-    .actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
-
+    /* ---- Buttons ---- */
     button, .btn {
       border: 1px solid transparent;
-      border-radius: 10px;
-      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      padding: 7px 14px;
       cursor: pointer;
       text-decoration: none;
-      transition: transform 110ms ease, filter 110ms ease;
+      font-weight: 500;
+      font-size: 0.86rem;
+      transition: transform 80ms, filter 80ms, opacity 80ms;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 36px;
+      gap: 6px;
+      min-height: 34px;
     }
 
-    button:hover, .btn:hover {
+    button:hover:not(:disabled), .btn:hover:not(:disabled) {
       transform: translateY(-1px);
-      filter: brightness(1.03);
+      filter: brightness(1.04);
+    }
+
+    button:disabled, .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      filter: none;
     }
 
     .primary {
       color: #fff;
-      background: linear-gradient(145deg, var(--brand), var(--brand-strong));
+      background: var(--brand);
     }
 
     .ghost {
       color: var(--brand-strong);
       background: var(--surface-alt);
-      border-color: rgba(88, 173, 132, 0.3);
+      border-color: var(--line);
     }
 
-    .warn {
+    :root[data-theme="dark"] .ghost { color: var(--brand); }
+
+    .warn-btn {
       color: #fff;
-      background: linear-gradient(145deg, #cf8f42, var(--warn));
+      background: var(--warn);
     }
 
-    .danger {
+    .danger-btn {
       color: #fff;
-      background: linear-gradient(145deg, #cc5f6c, var(--danger));
+      background: var(--danger);
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      min-height: 28px;
     }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-download {
+      color: #fff;
+      background: var(--brand-strong);
+      font-size: 0.92rem;
+      padding: 9px 20px;
+      min-height: 38px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    :root[data-theme="dark"] .btn-download { background: var(--brand); color: #0f1613; }
+
+    /* ---- Message ---- */
+    .message {
+      min-height: 1rem;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .message.ok { color: var(--brand-strong); }
+    :root[data-theme="dark"] .message.ok { color: var(--brand); }
+    .message.warn { color: var(--warn); }
+    .message.err { color: var(--danger); }
 
     .hint {
       color: var(--muted);
-      font-size: 0.87rem;
-      margin: 0;
+      font-size: 0.82rem;
     }
 
-    .message {
-      margin: 0;
-      min-height: 1.2rem;
+    .small {
+      font-size: 0.8rem;
       color: var(--muted);
-      font-size: 0.94rem;
     }
 
-    .message.ok {
-      color: var(--brand-strong);
+    /* ---- Stats bar ---- */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      align-items: baseline;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      font-size: 0.84rem;
     }
 
-    .message.warn {
-      color: var(--warn);
+    .stat-item {
+      display: flex;
+      gap: 5px;
+      align-items: baseline;
     }
 
-    .message.err {
-      color: var(--danger);
-    }
-
-    .stats {
-      display: grid;
-      gap: 8px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      margin-top: 8px;
-    }
-
-    .stat {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--surface-alt);
-      padding: 9px 10px;
-    }
-
-    .stat .k {
-      margin: 0;
+    .stat-label {
+      color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.18px;
-      font-size: 0.75rem;
-      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.4px;
+      font-weight: 600;
     }
 
-    .stat .v {
-      margin: 4px 0 0;
-      font-size: 1rem;
-      word-break: break-all;
+    .stat-value {
+      color: var(--text-secondary);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.82rem;
     }
 
+    /* ---- Tree ---- */
     .tree {
-      margin-top: 8px;
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: var(--radius-sm);
       background: var(--surface-alt);
-      min-height: 220px;
-      max-height: 360px;
+      min-height: 300px;
+      max-height: calc(100vh - 320px);
       overflow: auto;
-      padding: 10px;
-      font-family: "IBM Plex Mono", "Cascadia Mono", "Menlo", monospace;
-      font-size: 0.83rem;
-      line-height: 1.45;
+      padding: 12px 14px;
+      font-family: "JetBrains Mono", "Cascadia Mono", monospace;
+      font-size: 0.78rem;
+      line-height: 1.55;
       white-space: pre;
+      color: var(--text-secondary);
     }
 
+    .tree-empty {
+      color: var(--muted);
+      font-family: "DM Sans", sans-serif;
+      font-style: italic;
+      font-size: 0.86rem;
+      white-space: normal;
+      padding: 32px 16px;
+      text-align: center;
+    }
+
+    /* ---- Share row ---- */
     .share-row {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 8px;
+      gap: 6px;
+      align-items: end;
+    }
+
+    /* ---- Preview header ---- */
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    /* ---- Config editor ---- */
+    .config-layout {
+      max-width: 720px;
     }
 
     .preset-list {
@@ -372,9 +492,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
     .preset {
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: var(--radius-sm);
       background: var(--surface-alt);
-      padding: 10px;
+      padding: 12px;
       display: grid;
       gap: 8px;
     }
@@ -387,133 +507,184 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     }
 
     .preset-head strong {
-      font-size: 0.92rem;
+      font-size: 0.88rem;
       font-weight: 600;
       color: var(--text);
     }
 
-    .small {
-      font-size: 0.82rem;
-      color: var(--muted);
-    }
-
-    @media (max-width: 980px) {
-      .layout {
-        grid-template-columns: 1fr;
-      }
-      .row-2, .row-3 {
-        grid-template-columns: 1fr;
-      }
-      .stats {
-        grid-template-columns: 1fr;
-      }
-      .share-row {
-        grid-template-columns: 1fr;
-      }
+    /* ---- Responsive ---- */
+    @media (max-width: 840px) {
+      .dl-layout { grid-template-columns: 1fr; }
+      .dl-sidebar { position: static; }
+      .row-2, .row-3 { grid-template-columns: 1fr; }
+      .share-row { grid-template-columns: 1fr; }
+      .tree { max-height: 50vh; }
     }
 
     @keyframes reveal {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 600ms linear infinite;
+      vertical-align: middle;
+    }
+
+    .spinner-dark {
+      border-color: rgba(0,0,0,0.15);
+      border-top-color: var(--brand);
     }
   </style>
 </head>
 <body>
   <main class="frame">
     <header class="header">
-      <div>
+      <div class="header-left">
         <h1 class="title">zip-forger</h1>
-        <p class="subtitle">Build zip bundles from Forgejo repos by selecting presets or ad-hoc filters. Everything is streamed directly from the source repository.</p>
+        <span class="auth-badge" id="authBadge">checking...</span>
+        <a class="btn ghost" id="loginBtn" href="/auth/login?return_to=/" hidden style="font-size:0.8rem;padding:4px 10px;min-height:26px;">Sign in</a>
+        <button class="ghost" id="logoutBtn" type="button" hidden style="font-size:0.8rem;padding:4px 10px;min-height:26px;">Sign out</button>
       </div>
-      <div class="theme" role="group" aria-label="theme mode">
-        <button class="theme-btn" type="button" data-theme="system">System</button>
-        <button class="theme-btn" type="button" data-theme="light">Light</button>
-        <button class="theme-btn" type="button" data-theme="dark">Dark</button>
+      <div class="header-right">
+        <div class="theme-toggle" role="group" aria-label="theme mode">
+          <button class="theme-btn" type="button" data-theme="system">Sys</button>
+          <button class="theme-btn" type="button" data-theme="light">Light</button>
+          <button class="theme-btn" type="button" data-theme="dark">Dark</button>
+        </div>
       </div>
     </header>
 
-    <section class="status">
-      <span class="pill" id="authBadge">auth: checking</span>
-      <span class="pill">ui: enabled</span>
-      <div class="actions">
-        <a class="btn ghost" id="loginBtn" href="/auth/login?return_to=/" hidden>Sign in</a>
-        <button class="ghost" id="logoutBtn" type="button" hidden>Sign out</button>
-      </div>
-    </section>
+    <div class="auth-banner" id="authBanner">
+      Authentication is required to use this service. Please sign in.
+      <a class="btn ghost" id="bannerLoginBtn" href="/auth/login?return_to=/" style="font-size:0.8rem;padding:4px 10px;min-height:26px;margin-left:auto;">Sign in</a>
+    </div>
 
-    <div class="layout">
-      <div class="stack">
-        <section class="card">
-          <h2>Selection</h2>
-          <div class="grid">
-            <div class="row-3">
-              <label>Owner
-                <input id="owner" list="ownerOptions" value="acme" autocomplete="off" />
-                <datalist id="ownerOptions"></datalist>
-              </label>
-              <label>Repository
-                <input id="repo" list="repoOptions" value="rules" autocomplete="off" />
-                <datalist id="repoOptions"></datalist>
-              </label>
-              <label>Branch / Ref
-                <input id="ref" list="branchOptions" value="main" autocomplete="off" />
-                <datalist id="branchOptions"></datalist>
-              </label>
+    <nav class="tab-bar" role="tablist">
+      <button class="tab-btn active" type="button" role="tab" data-tab="download" aria-selected="true">Download</button>
+      <button class="tab-btn" type="button" role="tab" data-tab="configure" aria-selected="false">Configure</button>
+    </nav>
+
+    <!-- ==================== DOWNLOAD TAB ==================== -->
+    <div class="tab-panel active" id="panel-download" role="tabpanel">
+      <div class="dl-layout">
+        <div class="dl-sidebar">
+          <section class="card">
+            <div class="card-title">Repository</div>
+            <div class="grid">
+              <div class="row-3">
+                <label>Owner
+                  <input id="owner" list="ownerOptions" autocomplete="off" placeholder="owner" />
+                  <datalist id="ownerOptions"></datalist>
+                </label>
+                <label>Repo
+                  <input id="repo" list="repoOptions" autocomplete="off" placeholder="repo" />
+                  <datalist id="repoOptions"></datalist>
+                </label>
+                <label>Ref
+                  <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
+                  <datalist id="branchOptions"></datalist>
+                </label>
+              </div>
+              <button class="ghost" id="loadConfigBtn" type="button" style="justify-self:start;">Load config</button>
             </div>
+          </section>
 
-            <label>Preset
-              <select id="preset">
-                <option value="">(none)</option>
-              </select>
-            </label>
-            <p class="hint" id="presetHint">Load repository config to populate presets.</p>
-
-            <label class="check">
-              <input id="useAdhoc" type="checkbox" />
-              Enable ad-hoc filters
-            </label>
-
-            <div class="row-2">
-              <label>Include globs
-                <textarea id="includeGlobs" placeholder="rules/core/**/*.pdf"></textarea>
+          <section class="card">
+            <div class="card-title">Filters</div>
+            <div class="grid">
+              <label>Preset
+                <select id="preset">
+                  <option value="">(none)</option>
+                </select>
               </label>
-              <label>Exclude globs
-                <textarea id="excludeGlobs" placeholder="**/*draft*"></textarea>
+              <p class="hint" id="presetHint">Load config to populate presets.</p>
+
+              <label class="check">
+                <input id="useAdhoc" type="checkbox" />
+                Ad-hoc filters
               </label>
+
+              <div id="adhocFields" class="grid">
+                <div class="row-2">
+                  <label>Include globs
+                    <textarea id="includeGlobs" placeholder="**/*.pdf"></textarea>
+                  </label>
+                  <label>Exclude globs
+                    <textarea id="excludeGlobs" placeholder="**/*draft*"></textarea>
+                  </label>
+                </div>
+                <div class="row-2">
+                  <label>Extensions
+                    <input id="extensions" placeholder=".pdf, .md" />
+                  </label>
+                  <label>Path prefixes
+                    <input id="prefixes" placeholder="rules/core" />
+                  </label>
+                </div>
+              </div>
             </div>
-            <div class="row-2">
-              <label>Extensions
-                <input id="extensions" placeholder=".pdf,.md" />
-              </label>
-              <label>Path prefixes
-                <input id="prefixes" placeholder="rules/core,session-notes" />
-              </label>
-            </div>
+          </section>
 
-            <div class="actions">
-              <button class="ghost" id="loadConfigBtn" type="button">Load config</button>
-              <button class="primary" id="previewBtn" type="button">Preview</button>
-              <button class="warn" id="downloadBtn" type="button">Download ZIP</button>
-            </div>
-
-            <label>Shareable download URL
+          <section class="card">
+            <div class="card-title">Share</div>
+            <label>Download URL
               <div class="share-row">
                 <input id="shareUrl" readonly />
-                <button class="ghost" id="copyUrlBtn" type="button">Copy URL</button>
+                <button class="ghost" id="copyUrlBtn" type="button">Copy</button>
               </div>
             </label>
-          </div>
-        </section>
+          </section>
+        </div>
 
+        <div class="dl-main">
+          <section class="card">
+            <div class="preview-header">
+              <div class="btn-row">
+                <button class="ghost" id="previewBtn" type="button">Preview</button>
+                <button class="btn-download" id="downloadBtn" type="button" disabled>Download ZIP</button>
+              </div>
+              <p id="message" class="message">Ready.</p>
+            </div>
+
+            <div class="stats-bar">
+              <div class="stat-item">
+                <span class="stat-label">Commit</span>
+                <span class="stat-value" id="commitValue">&mdash;</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Files</span>
+                <span class="stat-value" id="filesValue">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Size</span>
+                <span class="stat-value" id="bytesValue">0 B</span>
+              </div>
+            </div>
+
+            <div id="treeView" class="tree"><span class="tree-empty">Run a preview to see matched files.</span></div>
+            <p id="treeHint" class="small" style="margin-top:4px;"></p>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== CONFIGURE TAB ==================== -->
+    <div class="tab-panel" id="panel-configure" role="tabpanel">
+      <div class="config-layout">
         <section class="card">
-          <h2>Config Editor</h2>
-          <p class="hint">Edit zip-forger presets and save directly to the selected branch.</p>
+          <div class="card-title">Repository Config</div>
+          <p class="hint" style="margin-bottom:12px;">Edit <code>.zip-forger.yaml</code> presets and options, then save to the selected branch.</p>
           <div class="grid">
             <label class="check">
               <input id="allowAdhocFilters" type="checkbox" />
@@ -527,36 +698,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
                 <input id="maxBytesPerDownload" type="number" min="0" step="1" placeholder="0 = unlimited" />
               </label>
             </div>
-            <p class="hint">Optional limits from <code>.zip-forger.yaml</code>. Leave empty or set <code>0</code> for no limit.</p>
-            <div class="actions">
+
+            <div class="btn-row" style="margin-top:4px;">
               <button class="ghost" id="addPresetBtn" type="button">Add preset</button>
               <button class="primary" id="saveConfigBtn" type="button">Save config</button>
             </div>
+
             <div id="presetList" class="preset-list"></div>
           </div>
-        </section>
-      </div>
-
-      <div class="stack">
-        <section class="card">
-          <h2>Preview</h2>
-          <p id="message" class="message">Ready.</p>
-          <div class="stats">
-            <article class="stat">
-              <p class="k">Commit</p>
-              <p class="v" id="commitValue">-</p>
-            </article>
-            <article class="stat">
-              <p class="k">Files</p>
-              <p class="v" id="filesValue">0</p>
-            </article>
-            <article class="stat">
-              <p class="k">Bytes</p>
-              <p class="v" id="bytesValue">0 B</p>
-            </article>
-          </div>
-          <div id="treeView" class="tree">No preview loaded.</div>
-          <p id="treeHint" class="small"></p>
         </section>
       </div>
     </div>
@@ -571,7 +720,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       const state = {
         configLoaded: false,
         config: null,
-        preview: null
+        preview: null,
+        busy: false
       };
 
       const nodes = {
@@ -584,6 +734,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         preset: document.getElementById("preset"),
         presetHint: document.getElementById("presetHint"),
         useAdhoc: document.getElementById("useAdhoc"),
+        adhocFields: document.getElementById("adhocFields"),
         includeGlobs: document.getElementById("includeGlobs"),
         excludeGlobs: document.getElementById("excludeGlobs"),
         extensions: document.getElementById("extensions"),
@@ -600,9 +751,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         treeView: document.getElementById("treeView"),
         treeHint: document.getElementById("treeHint"),
         authBadge: document.getElementById("authBadge"),
+        authBanner: document.getElementById("authBanner"),
+        bannerLoginBtn: document.getElementById("bannerLoginBtn"),
         loginBtn: document.getElementById("loginBtn"),
         logoutBtn: document.getElementById("logoutBtn"),
         themeButtons: Array.from(document.querySelectorAll("[data-theme]")),
+        tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
         maxFilesPerDownload: document.getElementById("maxFilesPerDownload"),
         maxBytesPerDownload: document.getElementById("maxBytesPerDownload"),
@@ -617,20 +771,44 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       hydrateAuth().then(() => initData());
       updateShareURL();
 
+      /* ---- Loading state helpers ---- */
+      function withLoading(btn, label, fn) {
+        return async function () {
+          if (state.busy) return;
+          state.busy = true;
+          const original = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = label;
+          try {
+            await fn();
+          } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+            state.busy = false;
+            updateDownloadState();
+          }
+        };
+      }
+
+      function updateDownloadState() {
+        nodes.downloadBtn.disabled = !state.preview || state.busy;
+      }
+
+      /* ---- Events ---- */
       function wireEvents() {
-        nodes.loadConfigBtn.addEventListener("click", () => run(loadConfig));
-        nodes.previewBtn.addEventListener("click", () => run(previewSelection));
+        nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
+        nodes.previewBtn.addEventListener("click", () => run(withLoading(nodes.previewBtn, "Loading...", previewSelection)));
         nodes.downloadBtn.addEventListener("click", triggerDownload);
         nodes.copyUrlBtn.addEventListener("click", copyShareURL);
         nodes.logoutBtn.addEventListener("click", logout);
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
-        nodes.saveConfigBtn.addEventListener("click", () => run(saveConfig));
+        nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
 
         nodes.owner.addEventListener("change", () => run(onOwnerChanged));
         nodes.repo.addEventListener("change", () => run(onRepoChanged));
         nodes.ref.addEventListener("change", updateShareURL);
         nodes.preset.addEventListener("change", updateShareURL);
-        nodes.useAdhoc.addEventListener("change", updateShareURL);
+        nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
         nodes.includeGlobs.addEventListener("input", updateShareURL);
         nodes.excludeGlobs.addEventListener("input", updateShareURL);
         nodes.extensions.addEventListener("input", updateShareURL);
@@ -638,6 +816,27 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
         nodes.themeButtons.forEach((button) => {
           button.addEventListener("click", () => setThemeMode(button.dataset.theme));
+        });
+
+        nodes.tabButtons.forEach((button) => {
+          button.addEventListener("click", () => switchTab(button.dataset.tab));
+        });
+
+        updateAdhocVisibility();
+      }
+
+      function updateAdhocVisibility() {
+        nodes.adhocFields.style.display = nodes.useAdhoc.checked ? "grid" : "none";
+      }
+
+      function switchTab(tabId) {
+        nodes.tabButtons.forEach((btn) => {
+          const isActive = btn.dataset.tab === tabId;
+          btn.classList.toggle("active", isActive);
+          btn.setAttribute("aria-selected", String(isActive));
+        });
+        document.querySelectorAll(".tab-panel").forEach((panel) => {
+          panel.classList.toggle("active", panel.id === "panel-" + tabId);
         });
       }
 
@@ -651,6 +850,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         }
       }
 
+      /* ---- Theme ---- */
       function initTheme() {
         const media = window.matchMedia("(prefers-color-scheme: dark)");
         const current = localStorage.getItem(THEME_KEY) || "system";
@@ -677,26 +877,38 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         });
       }
 
+      /* ---- Auth ---- */
       async function hydrateAuth() {
         if (!AUTH_ENABLED) {
-          nodes.authBadge.textContent = AUTH_REQUIRED ? "auth: required" : "auth: disabled";
+          nodes.authBadge.textContent = AUTH_REQUIRED ? "auth required" : "no auth";
+          if (AUTH_REQUIRED) {
+            nodes.authBanner.classList.add("visible");
+          }
           return;
         }
 
+        const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+        nodes.loginBtn.href = "/auth/login?return_to=" + returnTo;
+        nodes.bannerLoginBtn.href = "/auth/login?return_to=" + returnTo;
         nodes.loginBtn.hidden = false;
-        nodes.loginBtn.href = "/auth/login?return_to=" + encodeURIComponent(window.location.pathname + window.location.search);
 
         try {
           const payload = await apiFetch("/auth/me", { credentials: "same-origin" });
           if (payload.authenticated) {
-            nodes.authBadge.textContent = "auth: signed in";
+            nodes.authBadge.textContent = "signed in";
             nodes.logoutBtn.hidden = false;
             nodes.loginBtn.hidden = true;
           } else {
-            nodes.authBadge.textContent = AUTH_REQUIRED ? "auth: sign in required" : "auth: optional";
+            nodes.authBadge.textContent = AUTH_REQUIRED ? "sign in required" : "not signed in";
+            if (AUTH_REQUIRED) {
+              nodes.authBanner.classList.add("visible");
+            }
           }
         } catch (_err) {
-          nodes.authBadge.textContent = "auth: unavailable";
+          nodes.authBadge.textContent = "auth error";
+          if (AUTH_REQUIRED) {
+            nodes.authBanner.classList.add("visible");
+          }
         }
       }
 
@@ -705,11 +917,20 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         window.location.reload();
       }
 
+      /* ---- Data loading ---- */
       async function initData() {
-        await loadOwners();
-        await onOwnerChanged();
-        await onRepoChanged();
-        await loadConfig();
+        try {
+          await loadOwners();
+        } catch (_e) {}
+        try {
+          await onOwnerChanged();
+        } catch (_e) {}
+        try {
+          await onRepoChanged();
+        } catch (_e) {}
+        try {
+          await loadConfig();
+        } catch (_e) {}
       }
 
       function currentSelection() {
@@ -771,20 +992,21 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           state.config.presets = [];
         }
 
-        nodes.commitValue.textContent = payload.commit || "-";
+        nodes.commitValue.textContent = payload.commit || "\u2014";
         nodes.allowAdhocFilters.checked = state.config.options.allowAdhocFilters !== false;
         nodes.maxFilesPerDownload.value = formatLimitValue(state.config.options.maxFilesPerDownload);
         nodes.maxBytesPerDownload.value = formatLimitValue(state.config.options.maxBytesPerDownload);
         nodes.useAdhoc.disabled = state.config.options.allowAdhocFilters === false;
         if (nodes.useAdhoc.disabled) {
           nodes.useAdhoc.checked = false;
+          updateAdhocVisibility();
         }
 
         renderPresetSelect();
         renderPresetEditor();
         nodes.presetHint.textContent = state.config.presets.length > 0
-          ? "Loaded " + state.config.presets.length + " preset(s)."
-          : "No presets found in .zip-forger.yaml.";
+          ? state.config.presets.length + " preset(s) loaded."
+          : "No presets in config.";
         setMessage("Config loaded.", "ok");
       }
 
@@ -793,7 +1015,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.preset.innerHTML = "";
         nodes.preset.appendChild(optionNode("", "(none)"));
         for (const preset of state.config.presets) {
-          const label = preset.description ? preset.id + " - " + preset.description : preset.id;
+          const label = preset.description ? preset.id + " \u2014 " + preset.description : preset.id;
           nodes.preset.appendChild(optionNode(preset.id, label));
         }
         if (selected && state.config.presets.some((p) => p.id === selected)) {
@@ -804,10 +1026,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       function renderPresetEditor() {
         nodes.presetList.innerHTML = "";
-        if (!state.config.presets.length) {
+        if (!state.config || !state.config.presets.length) {
           const empty = document.createElement("p");
           empty.className = "small";
-          empty.textContent = "No presets yet. Add one below.";
+          empty.textContent = "No presets yet.";
           nodes.presetList.appendChild(empty);
           return;
         }
@@ -827,7 +1049,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         const title = document.createElement("strong");
         title.textContent = preset.id || "new-preset";
         const deleteButton = document.createElement("button");
-        deleteButton.className = "danger";
+        deleteButton.className = "danger-btn";
         deleteButton.type = "button";
         deleteButton.textContent = "Delete";
         deleteButton.addEventListener("click", () => {
@@ -905,7 +1127,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           throw new Error("Owner and repository are required.");
         }
         if (!state.config) {
-          throw new Error("No configuration loaded.");
+          throw new Error("No configuration loaded. Load config from the Download tab first.");
         }
 
         state.config.version = 1;
@@ -952,6 +1174,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         await loadConfig();
       }
 
+      /* ---- Preview & Download ---- */
       async function previewSelection() {
         const selected = currentSelection();
         if (!selected) {
@@ -975,23 +1198,23 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         });
 
         state.preview = payload;
-        nodes.commitValue.textContent = payload.commit || "-";
+        nodes.commitValue.textContent = payload.commit || "\u2014";
         nodes.filesValue.textContent = String(payload.selectedFiles || 0);
         nodes.bytesValue.textContent = formatBytes(payload.totalBytes || 0);
         renderTree(payload.entries || [], !!payload.entriesTruncated);
-        setMessage("Preview ready.", "ok");
+        setMessage("Preview ready" + (payload.fromCache ? " (cached)." : "."), "ok");
       }
 
       function renderTree(paths, truncated) {
         if (!paths.length) {
-          nodes.treeView.textContent = "(no files selected)";
+          nodes.treeView.innerHTML = '<span class="tree-empty">No files matched your filters. Try adjusting your preset or ad-hoc filter settings.</span>';
           nodes.treeHint.textContent = "";
           return;
         }
         const lines = compactTreeLines(paths);
         nodes.treeView.textContent = lines.join("\n");
         nodes.treeHint.textContent = truncated
-          ? "Preview list truncated for UI performance."
+          ? "List truncated to first 2,000 entries."
           : "";
       }
 
@@ -1015,6 +1238,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       function triggerDownload() {
+        if (!state.preview) {
+          setMessage("Run a preview first.", "err");
+          return;
+        }
         const selected = currentSelection();
         if (!selected) {
           setMessage("Owner and repository are required.", "err");
@@ -1025,9 +1252,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       async function copyShareURL() {
         const value = nodes.shareUrl.value;
-        if (!value) {
-          return;
-        }
+        if (!value) return;
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(value);
         } else {
@@ -1035,7 +1260,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.shareUrl.select();
           document.execCommand("copy");
         }
-        setMessage("Download URL copied.", "ok");
+        setMessage("URL copied.", "ok");
       }
 
       function updateShareURL() {
@@ -1044,8 +1269,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.shareUrl.value = "";
           return;
         }
-        const absolute = window.location.origin + buildDownloadPath(selected);
-        nodes.shareUrl.value = absolute;
+        nodes.shareUrl.value = window.location.origin + buildDownloadPath(selected);
       }
 
       function buildDownloadPath(selected) {
@@ -1075,6 +1299,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         };
       }
 
+      /* ---- Utilities ---- */
       function setDatalist(listNode, values) {
         listNode.innerHTML = "";
         for (const value of values) {
@@ -1102,12 +1327,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       function joinList(value) {
-        if (!value) {
-          return "";
-        }
-        if (Array.isArray(value)) {
-          return value.join(", ");
-        }
+        if (!value) return "";
+        if (Array.isArray(value)) return value.join(", ");
         return String(value);
       }
 
@@ -1130,17 +1351,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       function formatLimitValue(value) {
         const numeric = Number(value);
-        if (!Number.isFinite(numeric) || numeric <= 0) {
-          return "";
-        }
+        if (!Number.isFinite(numeric) || numeric <= 0) return "";
         return String(Math.floor(numeric));
       }
 
       function parseLimitInput(value, fieldName, maxValue) {
         const trimmed = String(value || "").trim();
-        if (!trimmed) {
-          return 0;
-        }
+        if (!trimmed) return 0;
         if (!/^[0-9]+$/.test(trimmed)) {
           throw new Error(fieldName + " must be a whole number >= 0.");
         }

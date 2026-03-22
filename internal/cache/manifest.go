@@ -37,18 +37,15 @@ func NewManifestCache(ttl time.Duration, maxEntries int) *ManifestCache {
 }
 
 func (c *ManifestCache) Get(key string) (Manifest, bool) {
-	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	c.mu.RLock()
 	cached, ok := c.items[key]
-	c.mu.RUnlock()
 	if !ok {
 		return Manifest{}, false
 	}
-	if now.After(cached.expiresAt) {
-		c.mu.Lock()
+	if time.Now().After(cached.expiresAt) {
 		delete(c.items, key)
-		c.mu.Unlock()
 		return Manifest{}, false
 	}
 	return cached.value, true
