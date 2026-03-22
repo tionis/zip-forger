@@ -833,7 +833,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       nodes.useAdhoc.checked = true;
       initTheme();
       wireEvents();
-      hydrateAuth().then(() => initData());
+      hydrateAuth().then((authenticated) => {
+        if (!AUTH_REQUIRED || authenticated) {
+          initData();
+        }
+      });
       updateShareURL();
 
       /* ---- Loading state helpers ---- */
@@ -957,7 +961,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           } else {
             setAuthBadge("no auth");
           }
-          return;
+          return !AUTH_REQUIRED;
         }
 
         const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
@@ -971,17 +975,21 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             setAuthBadge("signed in", "state-signed-in");
             nodes.logoutBtn.hidden = false;
             nodes.loginBtn.hidden = true;
+            return true;
           } else if (AUTH_REQUIRED) {
             setAuthBadge("sign in required", "state-error");
             nodes.authBanner.classList.add("visible");
+            return false;
           } else {
             setAuthBadge("not signed in", "state-warning");
+            return true;
           }
         } catch (_err) {
           setAuthBadge("auth unavailable", "state-error");
           if (AUTH_REQUIRED) {
             nodes.authBanner.classList.add("visible");
           }
+          return false;
         }
       }
 
@@ -994,7 +1002,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       async function initData() {
         try {
           await loadOwners();
-        } catch (_e) {}
+        } catch (e) {
+          setMessage("Failed to load owners: " + e.message, "error");
+          return;
+        }
         try {
           await onOwnerChanged();
         } catch (_e) {}
@@ -1512,9 +1523,15 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           }
         }
         if (!response.ok) {
+          if (response.status === 401 && AUTH_ENABLED) {
+            nodes.authBanner.classList.add("visible");
+            setAuthBadge("session expired", "state-error");
+            nodes.loginBtn.hidden = false;
+            nodes.logoutBtn.hidden = true;
+          }
           const message = payload && payload.error && payload.error.message
             ? payload.error.message
-            : ("request failed with HTTP " + response.status);
+            : (response.status === 401 ? "not authenticated — please sign in" : "request failed with HTTP " + response.status);
           throw new Error(message);
         }
         return payload;
