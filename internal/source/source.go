@@ -8,6 +8,7 @@ import (
 
 var ErrNotFound = errors.New("source: not found")
 var ErrUnauthorized = errors.New("source: unauthorized")
+var ErrUnsupportedSearchMode = errors.New("source: unsupported search mode")
 
 type Entry struct {
 	Path string

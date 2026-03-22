@@ -782,6 +782,9 @@ func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
 	var out []repoSummary
 	for _, mode := range []string{"", "collaborative", "member"} {
 		results, err := s.searchRepos(ctx, mode)
+		if errors.Is(err, ErrUnsupportedSearchMode) {
+			continue // this Forgejo version doesn't support the mode, skip it
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -847,6 +850,9 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 			return fmt.Errorf("%w: forgejo %d: %s", ErrUnauthorized, resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 		return ErrUnauthorized
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		return ErrUnsupportedSearchMode
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
