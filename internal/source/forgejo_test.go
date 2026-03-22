@@ -200,12 +200,12 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 				}
 
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/user/repos":
-					return response(http.StatusOK, `[
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/search":
+					return response(http.StatusOK, `{"data":[
   {"name":"rules","owner":{"login":"acme"}},
   {"name":"notes","owner":{"login":"acme"}},
   {"name":"misc","owner":{"login":"other"}}
-]`), nil
+]}`), nil
 
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/branches":
 					return response(http.StatusOK, `[

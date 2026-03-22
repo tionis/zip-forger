@@ -773,6 +773,9 @@ func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath 
 }
 
 func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
+	// Use /repos/search instead of /user/repos: the latter requires the
+	// read:user scope which OAuth apps may not be granted, while /repos/search
+	// only requires read:repository and returns all repos the token can access.
 	const pageLimit = 100
 	page := 1
 	out := make([]repoSummary, 0, pageLimit)
@@ -781,14 +784,16 @@ func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
 		query := url.Values{}
 		query.Set("page", strconv.Itoa(page))
 		query.Set("limit", strconv.Itoa(pageLimit))
-		endpoint := s.baseURL + "/api/v1/user/repos?" + query.Encode()
+		endpoint := s.baseURL + "/api/v1/repos/search?" + query.Encode()
 
-		var payload []repoSummary
+		var payload struct {
+			Data []repoSummary `json:"data"`
+		}
 		if err := s.getJSON(ctx, endpoint, &payload); err != nil {
 			return nil, err
 		}
-		out = append(out, payload...)
-		if len(payload) < pageLimit {
+		out = append(out, payload.Data...)
+		if len(payload.Data) < pageLimit {
 			break
 		}
 		page++
