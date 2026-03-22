@@ -648,14 +648,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             <div class="card-title">Repository</div>
             <div class="grid">
               <label>Owner
-                <select id="owner">
-                  <option value="" disabled selected>Loading owners&hellip;</option>
-                </select>
+                <input id="owner" list="ownerOptions" autocomplete="off" placeholder="Loading owners&hellip;" />
+                <datalist id="ownerOptions"></datalist>
               </label>
               <label>Repository
-                <select id="repo" disabled>
-                  <option value="" disabled selected>Select an owner first</option>
-                </select>
+                <input id="repo" list="repoOptions" autocomplete="off" placeholder="Select an owner first" />
+                <datalist id="repoOptions"></datalist>
               </label>
               <label>Branch / Ref
                 <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
@@ -793,6 +791,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       const nodes = {
         owner: document.getElementById("owner"),
         repo: document.getElementById("repo"),
+        ownerOptions: document.getElementById("ownerOptions"),
+        repoOptions: document.getElementById("repoOptions"),
         ref: document.getElementById("ref"),
         branchOptions: document.getElementById("branchOptions"),
         repoSummary: document.getElementById("repoSummary"),
@@ -874,7 +874,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
 
         nodes.owner.addEventListener("change", () => run(onOwnerChanged));
+        nodes.owner.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
         nodes.repo.addEventListener("change", () => run(onRepoChanged));
+        nodes.repo.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
         nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); });
         nodes.ref.addEventListener("input", updateRepoSummary);
         nodes.preset.addEventListener("change", updateShareURL);
@@ -1065,26 +1067,25 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       async function loadOwners() {
         const payload = await apiFetch("/api/owners", { credentials: "same-origin" });
         const owners = payload.owners || [];
-        setSelectOptions(nodes.owner, owners, owners.length ? "Select owner\u2026" : "No owners found");
-        nodes.owner.disabled = owners.length === 0;
+        setDatalist(nodes.ownerOptions, owners);
+        nodes.owner.placeholder = owners.length ? "Type to search owners\u2026" : "No owners found";
+        nodes.owner.disabled = false;
       }
 
       async function onOwnerChanged() {
         updateShareURL();
         updateRepoSummary();
-        const owner = nodes.owner.value;
+        const owner = nodes.owner.value.trim();
         if (!owner) {
-          setSelectOptions(nodes.repo, [], "Select an owner first");
-          nodes.repo.disabled = true;
+          setDatalist(nodes.repoOptions, []);
           setDatalist(nodes.branchOptions, []);
           return;
         }
-        nodes.repo.disabled = true;
-        setSelectOptions(nodes.repo, [], "Loading\u2026");
+        nodes.repo.placeholder = "Loading\u2026";
         const payload = await apiFetch("/api/owners/" + encodeURIComponent(owner) + "/repos", { credentials: "same-origin" });
         const repos = payload.repos || [];
-        setSelectOptions(nodes.repo, repos, repos.length ? "Select repository\u2026" : "No repositories found");
-        nodes.repo.disabled = repos.length === 0;
+        setDatalist(nodes.repoOptions, repos);
+        nodes.repo.placeholder = repos.length ? "Type to search repos\u2026" : "No repositories found";
         updateRepoSummary();
       }
 
@@ -1523,15 +1524,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           }
         }
         if (!response.ok) {
-          if (response.status === 401 && AUTH_ENABLED) {
-            nodes.authBanner.classList.add("visible");
-            setAuthBadge("session expired", "state-error");
-            nodes.loginBtn.hidden = false;
-            nodes.logoutBtn.hidden = true;
-          }
           const message = payload && payload.error && payload.error.message
             ? payload.error.message
-            : (response.status === 401 ? "not authenticated — please sign in" : "request failed with HTTP " + response.status);
+            : ("request failed with HTTP " + response.status);
           throw new Error(message);
         }
         return payload;

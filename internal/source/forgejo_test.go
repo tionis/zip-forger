@@ -201,6 +201,11 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/search":
+					if r.URL.Query().Get("mode") == "collaborative" {
+						return response(http.StatusOK, `{"data":[
+  {"name":"collab-repo","owner":{"login":"third"}}
+]}`), nil
+					}
 					return response(http.StatusOK, `{"data":[
   {"name":"rules","owner":{"login":"acme"}},
   {"name":"notes","owner":{"login":"acme"}},
@@ -235,7 +240,7 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListOwners failed: %v", err)
 	}
-	if len(owners) != 2 || owners[0] != "acme" || owners[1] != "other" {
+	if len(owners) != 3 || owners[0] != "acme" || owners[1] != "other" || owners[2] != "third" {
 		t.Fatalf("unexpected owners: %#v", owners)
 	}
 

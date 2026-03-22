@@ -773,17 +773,44 @@ func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath 
 }
 
 func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
-	// Use /repos/search instead of /user/repos: the latter requires the
-	// read:user scope which OAuth apps may not be granted, while /repos/search
-	// only requires read:repository and returns all repos the token can access.
+	// /user/repos requires read:user scope which OAuth apps may not have.
+	// Instead, query /repos/search twice — once for owned repos and once for
+	// repos the user is an explicit collaborator on — then deduplicate.
+	owned, err := s.searchRepos(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	collab, err := s.searchRepos(ctx, "collaborative")
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(owned))
+	out := owned
+	for _, r := range owned {
+		seen[r.Owner.Login+"/"+r.Name] = struct{}{}
+	}
+	for _, r := range collab {
+		key := r.Owner.Login + "/" + r.Name
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (s *Forgejo) searchRepos(ctx context.Context, mode string) ([]repoSummary, error) {
 	const pageLimit = 100
 	page := 1
-	out := make([]repoSummary, 0, pageLimit)
+	var out []repoSummary
 
 	for {
 		query := url.Values{}
 		query.Set("page", strconv.Itoa(page))
 		query.Set("limit", strconv.Itoa(pageLimit))
+		if mode != "" {
+			query.Set("mode", mode)
+		}
 		endpoint := s.baseURL + "/api/v1/repos/search?" + query.Encode()
 
 		var payload struct {
