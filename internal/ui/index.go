@@ -510,6 +510,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       text-align: center;
     }
 
+    /* ---- Repo summary ---- */
+    .repo-summary {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+      color: var(--brand-strong);
+      background: var(--brand-soft);
+      border: 1px solid rgba(67, 97, 184, 0.2);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+    }
+
+    :root[data-theme="dark"] .repo-summary {
+      color: var(--brand);
+      border-color: rgba(123, 156, 244, 0.2);
+    }
+
     /* ---- Share row ---- */
     .share-row {
       display: grid;
@@ -631,20 +647,21 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           <section class="card">
             <div class="card-title">Repository</div>
             <div class="grid">
-              <div class="row-3">
-                <label>Owner
-                  <input id="owner" list="ownerOptions" autocomplete="off" placeholder="owner" />
-                  <datalist id="ownerOptions"></datalist>
-                </label>
-                <label>Repo
-                  <input id="repo" list="repoOptions" autocomplete="off" placeholder="repo" />
-                  <datalist id="repoOptions"></datalist>
-                </label>
-                <label>Ref
-                  <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
-                  <datalist id="branchOptions"></datalist>
-                </label>
-              </div>
+              <label>Owner
+                <select id="owner">
+                  <option value="" disabled selected>Loading owners&hellip;</option>
+                </select>
+              </label>
+              <label>Repository
+                <select id="repo" disabled>
+                  <option value="" disabled selected>Select an owner first</option>
+                </select>
+              </label>
+              <label>Branch / Ref
+                <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
+                <datalist id="branchOptions"></datalist>
+              </label>
+              <div id="repoSummary" class="repo-summary" hidden></div>
               <button class="ghost" id="loadConfigBtn" type="button" style="justify-self:start;">Load config</button>
             </div>
           </section>
@@ -777,9 +794,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         owner: document.getElementById("owner"),
         repo: document.getElementById("repo"),
         ref: document.getElementById("ref"),
-        ownerOptions: document.getElementById("ownerOptions"),
-        repoOptions: document.getElementById("repoOptions"),
         branchOptions: document.getElementById("branchOptions"),
+        repoSummary: document.getElementById("repoSummary"),
         preset: document.getElementById("preset"),
         presetHint: document.getElementById("presetHint"),
         useAdhoc: document.getElementById("useAdhoc"),
@@ -855,7 +871,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
         nodes.owner.addEventListener("change", () => run(onOwnerChanged));
         nodes.repo.addEventListener("change", () => run(onRepoChanged));
-        nodes.ref.addEventListener("change", updateShareURL);
+        nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); });
+        nodes.ref.addEventListener("input", updateRepoSummary);
         nodes.preset.addEventListener("change", updateShareURL);
         nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
         nodes.includeGlobs.addEventListener("input", updateShareURL);
@@ -999,31 +1016,82 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         return { owner, repo, ref };
       }
 
+      function setSelectOptions(selectEl, values, emptyLabel) {
+        const current = selectEl.value;
+        selectEl.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.disabled = true;
+        blank.textContent = emptyLabel;
+        selectEl.appendChild(blank);
+        for (const value of values) {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = value;
+          selectEl.appendChild(opt);
+        }
+        if (current && values.includes(current)) {
+          selectEl.value = current;
+        } else if (values.length === 1) {
+          selectEl.value = values[0];
+        } else {
+          selectEl.value = "";
+        }
+      }
+
+      function updateRepoSummary() {
+        const owner = nodes.owner.value;
+        const repo = nodes.repo.value;
+        const ref = nodes.ref.value.trim();
+        if (owner && repo) {
+          nodes.repoSummary.textContent = owner + " / " + repo + (ref ? "  @  " + ref : "");
+          nodes.repoSummary.hidden = false;
+        } else {
+          nodes.repoSummary.hidden = true;
+        }
+      }
+
       async function loadOwners() {
         const payload = await apiFetch("/api/owners", { credentials: "same-origin" });
-        setDatalist(nodes.ownerOptions, payload.owners || []);
+        const owners = payload.owners || [];
+        setSelectOptions(nodes.owner, owners, owners.length ? "Select owner\u2026" : "No owners found");
+        nodes.owner.disabled = owners.length === 0;
       }
 
       async function onOwnerChanged() {
         updateShareURL();
-        const owner = nodes.owner.value.trim();
+        updateRepoSummary();
+        const owner = nodes.owner.value;
         if (!owner) {
-          setDatalist(nodes.repoOptions, []);
+          setSelectOptions(nodes.repo, [], "Select an owner first");
+          nodes.repo.disabled = true;
+          setDatalist(nodes.branchOptions, []);
           return;
         }
+        nodes.repo.disabled = true;
+        setSelectOptions(nodes.repo, [], "Loading\u2026");
         const payload = await apiFetch("/api/owners/" + encodeURIComponent(owner) + "/repos", { credentials: "same-origin" });
-        setDatalist(nodes.repoOptions, payload.repos || []);
+        const repos = payload.repos || [];
+        setSelectOptions(nodes.repo, repos, repos.length ? "Select repository\u2026" : "No repositories found");
+        nodes.repo.disabled = repos.length === 0;
+        updateRepoSummary();
       }
 
       async function onRepoChanged() {
         updateShareURL();
+        updateRepoSummary();
         const selected = currentSelection();
         if (!selected) {
           setDatalist(nodes.branchOptions, []);
           return;
         }
         const payload = await apiFetch("/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/branches", { credentials: "same-origin" });
-        setDatalist(nodes.branchOptions, payload.branches || []);
+        const branches = payload.branches || [];
+        setDatalist(nodes.branchOptions, branches);
+        if (branches.length && !nodes.ref.value) {
+          nodes.ref.value = branches[0];
+        }
+        updateRepoSummary();
       }
 
       async function loadConfig() {
