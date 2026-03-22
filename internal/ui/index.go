@@ -873,10 +873,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
 
+        // datalist selections fire "input" but not "change" until blur in most
+        // browsers, so drive cascading loads from a debounced "input" handler.
+        const onOwnerInput = debounce(() => run(onOwnerChanged), 300);
+        const onRepoInput  = debounce(() => run(onRepoChanged),  300);
+        nodes.owner.addEventListener("input",  () => { updateShareURL(); updateRepoSummary(); onOwnerInput(); });
         nodes.owner.addEventListener("change", () => run(onOwnerChanged));
-        nodes.owner.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
-        nodes.repo.addEventListener("change", () => run(onRepoChanged));
-        nodes.repo.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
+        nodes.repo.addEventListener("input",   () => { updateShareURL(); updateRepoSummary(); onRepoInput(); });
+        nodes.repo.addEventListener("change",  () => run(onRepoChanged));
         nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); });
         nodes.ref.addEventListener("input", updateRepoSummary);
         nodes.preset.addEventListener("change", updateShareURL);
@@ -1436,6 +1440,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       /* ---- Utilities ---- */
+      function debounce(fn, ms) {
+        let t;
+        return function(...args) { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+      }
+
       function setDatalist(listNode, values) {
         listNode.innerHTML = "";
         for (const value of values) {
