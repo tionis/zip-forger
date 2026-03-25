@@ -348,6 +348,39 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       line-height: 1.4;
     }
 
+    .combo-wrap {
+      position: relative;
+    }
+    .combo-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      margin-top: 2px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .combo-dropdown .combo-item {
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    .combo-dropdown .combo-item:hover,
+    .combo-dropdown .combo-item.active {
+      background: var(--brand-soft);
+      color: var(--brand-strong);
+    }
+    .combo-dropdown .combo-empty {
+      padding: 8px 10px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
     .check {
       display: flex;
       align-items: center;
@@ -648,16 +681,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             <div class="card-title">Repository</div>
             <div class="grid">
               <label>Owner
-                <input id="owner" list="ownerOptions" autocomplete="off" placeholder="Loading owners&hellip;" />
-                <datalist id="ownerOptions"></datalist>
+                <div class="combo-wrap">
+                  <input id="owner" placeholder="Loading owners&hellip;" />
+                  <div id="ownerDropdown" class="combo-dropdown" hidden></div>
+                </div>
               </label>
               <label>Repository
-                <input id="repo" list="repoOptions" autocomplete="off" placeholder="Select an owner first" />
-                <datalist id="repoOptions"></datalist>
+                <div class="combo-wrap">
+                  <input id="repo" placeholder="Select an owner first" />
+                  <div id="repoDropdown" class="combo-dropdown" hidden></div>
+                </div>
               </label>
               <label>Branch / Ref
-                <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
-                <datalist id="branchOptions"></datalist>
+                <div class="combo-wrap">
+                  <input id="ref" value="main" placeholder="main" />
+                  <div id="refDropdown" class="combo-dropdown" hidden></div>
+                </div>
               </label>
               <div id="repoSummary" class="repo-summary" hidden></div>
               <button class="ghost" id="loadConfigBtn" type="button" style="justify-self:start;">Load config</button>
@@ -791,10 +830,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       const nodes = {
         owner: document.getElementById("owner"),
         repo: document.getElementById("repo"),
-        ownerOptions: document.getElementById("ownerOptions"),
-        repoOptions: document.getElementById("repoOptions"),
+        ownerDropdown: document.getElementById("ownerDropdown"),
+        repoDropdown: document.getElementById("repoDropdown"),
         ref: document.getElementById("ref"),
-        branchOptions: document.getElementById("branchOptions"),
+        refDropdown: document.getElementById("refDropdown"),
         repoSummary: document.getElementById("repoSummary"),
         preset: document.getElementById("preset"),
         presetHint: document.getElementById("presetHint"),
@@ -873,16 +912,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
 
-        // datalist selections fire "input" but not "change" until blur in most
-        // browsers, so drive cascading loads from a debounced "input" handler.
-        const onOwnerInput = debounce(() => run(onOwnerChanged), 300);
-        const onRepoInput  = debounce(() => run(onRepoChanged),  300);
-        nodes.owner.addEventListener("input",  () => { updateShareURL(); updateRepoSummary(); onOwnerInput(); });
-        nodes.owner.addEventListener("change", () => run(onOwnerChanged));
-        nodes.repo.addEventListener("input",   () => { updateShareURL(); updateRepoSummary(); onRepoInput(); });
-        nodes.repo.addEventListener("change",  () => run(onRepoChanged));
-        nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); });
-        nodes.ref.addEventListener("input", updateRepoSummary);
+        wireCombo(nodes.owner, nodes.ownerDropdown, () => run(onOwnerChanged));
+        wireCombo(nodes.repo,  nodes.repoDropdown,  () => run(onRepoChanged));
+        wireCombo(nodes.ref,   nodes.refDropdown,   () => { updateShareURL(); updateRepoSummary(); });
+        nodes.owner.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
+        nodes.repo.addEventListener("input",  () => { updateShareURL(); updateRepoSummary(); });
+        nodes.ref.addEventListener("input",   () => { updateShareURL(); updateRepoSummary(); });
         nodes.preset.addEventListener("change", updateShareURL);
         nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
         nodes.includeGlobs.addEventListener("input", updateShareURL);
@@ -1071,9 +1106,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       async function loadOwners() {
         const payload = await apiFetch("/api/owners", { credentials: "same-origin" });
         const owners = payload.owners || [];
-        setDatalist(nodes.ownerOptions, owners);
+        setComboOptions(nodes.owner, nodes.ownerDropdown, owners);
         nodes.owner.placeholder = owners.length ? "Type to search owners\u2026" : "No owners found";
-        nodes.owner.disabled = false;
       }
 
       async function onOwnerChanged() {
@@ -1081,14 +1115,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         updateRepoSummary();
         const owner = nodes.owner.value.trim();
         if (!owner) {
-          setDatalist(nodes.repoOptions, []);
-          setDatalist(nodes.branchOptions, []);
+          setComboOptions(nodes.repo, nodes.repoDropdown, []);
+          setComboOptions(nodes.ref, nodes.refDropdown, []);
           return;
         }
         nodes.repo.placeholder = "Loading\u2026";
         const payload = await apiFetch("/api/owners/" + encodeURIComponent(owner) + "/repos", { credentials: "same-origin" });
         const repos = payload.repos || [];
-        setDatalist(nodes.repoOptions, repos);
+        setComboOptions(nodes.repo, nodes.repoDropdown, repos);
         nodes.repo.placeholder = repos.length ? "Type to search repos\u2026" : "No repositories found";
         updateRepoSummary();
       }
@@ -1098,16 +1132,17 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         updateRepoSummary();
         const selected = currentSelection();
         if (!selected) {
-          setDatalist(nodes.branchOptions, []);
+          setComboOptions(nodes.ref, nodes.refDropdown, []);
           return;
         }
         const payload = await apiFetch("/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/branches", { credentials: "same-origin" });
         const branches = payload.branches || [];
-        setDatalist(nodes.branchOptions, branches);
+        setComboOptions(nodes.ref, nodes.refDropdown, branches);
         if (branches.length && !nodes.ref.value) {
           nodes.ref.value = branches[0];
+          updateShareURL();
+          updateRepoSummary();
         }
-        updateRepoSummary();
       }
 
       async function loadConfig() {
@@ -1445,7 +1480,92 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         return function(...args) { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
       }
 
+      // comboData maps input element → full option list for filtering
+      const comboData = new WeakMap();
+
+      function setComboOptions(input, dropdown, values) {
+        comboData.set(input, values);
+        renderComboDropdown(input, dropdown, input.value);
+      }
+
+      function renderComboDropdown(input, dropdown, query) {
+        const all = comboData.get(input) || [];
+        const q = query.trim().toLowerCase();
+        const matches = q ? all.filter(v => v.toLowerCase().includes(q)) : all;
+        dropdown.innerHTML = "";
+        if (!matches.length) {
+          if (q && all.length) {
+            const empty = document.createElement("div");
+            empty.className = "combo-empty";
+            empty.textContent = "No matches";
+            dropdown.appendChild(empty);
+            dropdown.hidden = false;
+          } else {
+            dropdown.hidden = true;
+          }
+          return;
+        }
+        matches.forEach(value => {
+          const item = document.createElement("div");
+          item.className = "combo-item";
+          item.textContent = value;
+          item.addEventListener("mousedown", (e) => {
+            e.preventDefault(); // keep focus on input
+            input.value = value;
+            dropdown.hidden = true;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          dropdown.appendChild(item);
+        });
+        dropdown.hidden = false;
+      }
+
+      function wireCombo(input, dropdown, onSelect) {
+        // Show filtered list on focus
+        input.addEventListener("focus", () => {
+          renderComboDropdown(input, dropdown, input.value);
+        });
+        // Filter on keystroke
+        input.addEventListener("input", () => {
+          renderComboDropdown(input, dropdown, input.value);
+        });
+        // Hide on blur (mousedown on item fires before blur, so the item
+        // handler gets to run first due to the preventDefault above)
+        input.addEventListener("blur", () => {
+          setTimeout(() => { dropdown.hidden = true; }, 150);
+        });
+        // Keyboard navigation
+        input.addEventListener("keydown", (e) => {
+          const items = Array.from(dropdown.querySelectorAll(".combo-item"));
+          const active = dropdown.querySelector(".combo-item.active");
+          const idx = items.indexOf(active);
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            const next = items[idx + 1] || items[0];
+            if (next) { active && active.classList.remove("active"); next.classList.add("active"); next.scrollIntoView({block:"nearest"}); }
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            const prev = items[idx - 1] || items[items.length - 1];
+            if (prev) { active && active.classList.remove("active"); prev.classList.add("active"); prev.scrollIntoView({block:"nearest"}); }
+          } else if (e.key === "Enter" && active) {
+            e.preventDefault();
+            input.value = active.textContent;
+            dropdown.hidden = true;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            if (onSelect) onSelect();
+          } else if (e.key === "Escape") {
+            dropdown.hidden = true;
+          }
+        });
+        // When a value is confirmed via mousedown item handler, trigger onSelect
+        input.addEventListener("change", () => {
+          if (onSelect) onSelect();
+        });
+      }
+
       function setDatalist(listNode, values) {
+        // kept for any remaining callers
         listNode.innerHTML = "";
         for (const value of values) {
           const option = document.createElement("option");
