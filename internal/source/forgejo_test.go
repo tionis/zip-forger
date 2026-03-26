@@ -154,16 +154,24 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
 					return response(http.StatusOK, `{"sha":"commit-sha","truncated":true,"tree":[]}`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/contents" && r.URL.Query().Get("ref") == "commit-sha":
-					return response(http.StatusOK, `[
-  {"type":"dir","path":"rules"},
-  {"type":"file","path":"README.md","size":4}
-]`), nil
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "":
+					return response(http.StatusOK, `{
+  "sha":"commit-sha",
+  "truncated":false,
+  "tree":[
+    {"path":"rules","type":"tree","sha":"rules-sha"},
+    {"path":"README.md","type":"blob","size":4}
+  ]
+}`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/contents/rules" && r.URL.Query().Get("ref") == "commit-sha":
-					return response(http.StatusOK, `[
-  {"type":"file","path":"rules/core.pdf","size":12}
-]`), nil
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/rules-sha" && r.URL.Query().Get("recursive") == "true":
+					return response(http.StatusOK, `{
+  "sha":"rules-sha",
+  "truncated":false,
+  "tree":[
+    {"path":"core.pdf","type":"blob","size":12}
+  ]
+}`), nil
 				}
 				return response(http.StatusNotFound, `{"message":"not found"}`), nil
 			}),

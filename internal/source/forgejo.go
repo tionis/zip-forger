@@ -112,8 +112,8 @@ func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string) ([]
 		return entries, nil
 	}
 
-	// Recursive tree endpoint can truncate for large repositories; walk directories instead.
-	return s.listFilesByContents(ctx, owner, repo, commit)
+	// Recursive tree endpoint can truncate for large repositories; walk sub-trees instead.
+	return s.listFilesByTrees(ctx, owner, repo, commit)
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
@@ -565,6 +565,7 @@ type treeResponse struct {
 		Path string `json:"path"`
 		Type string `json:"type"`
 		Size int64  `json:"size"`
+		SHA  string `json:"sha"`
 	} `json:"tree"`
 }
 
@@ -591,37 +592,57 @@ func (s *Forgejo) getTree(ctx context.Context, owner, repo, ref string, recursiv
 	return payload, nil
 }
 
-type contentItem struct {
-	Type string `json:"type"`
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+type treeItem struct {
+	path string
+	sha  string
 }
 
-func (s *Forgejo) listFilesByContents(ctx context.Context, owner, repo, commit string) ([]Entry, error) {
-	queue := []string{""}
-	out := make([]Entry, 0, 1024)
+func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit string) ([]Entry, error) {
+	// Start by fetching the root tree non-recursively.
+	rootTree, err := s.getTree(ctx, owner, repo, commit, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []Entry
+	var queue []treeItem
+	for _, node := range rootTree.Tree {
+		if node.Type == "blob" {
+			out = append(out, Entry{Path: normalizePath(node.Path), Size: node.Size})
+		} else if node.Type == "tree" && node.SHA != "" {
+			queue = append(queue, treeItem{path: node.Path, sha: node.SHA})
+		}
+	}
 
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 
-		items, err := s.getDirectoryContents(ctx, owner, repo, commit, current)
+		// Fetch the subtree recursively
+		subtree, err := s.getTree(ctx, owner, repo, current.sha, true)
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range items {
-			switch item.Type {
-			case "dir":
-				if item.Path != "" {
-					queue = append(queue, item.Path)
+
+		if !subtree.Truncated {
+			for _, node := range subtree.Tree {
+				if node.Type == "blob" {
+					fullPath := current.path + "/" + node.Path
+					out = append(out, Entry{Path: normalizePath(fullPath), Size: node.Size})
 				}
-			case "file":
-				filePath := normalizePath(item.Path)
-				if filePath != "" {
-					out = append(out, Entry{
-						Path: filePath,
-						Size: item.Size,
-					})
+			}
+		} else {
+			// If it truncated even recursively, fallback to non-recursive for this subtree
+			subtreeNonRec, err := s.getTree(ctx, owner, repo, current.sha, false)
+			if err != nil {
+				return nil, err
+			}
+			for _, node := range subtreeNonRec.Tree {
+				fullPath := current.path + "/" + node.Path
+				if node.Type == "blob" {
+					out = append(out, Entry{Path: normalizePath(fullPath), Size: node.Size})
+				} else if node.Type == "tree" && node.SHA != "" {
+					queue = append(queue, treeItem{path: fullPath, sha: node.SHA})
 				}
 			}
 		}
@@ -631,68 +652,6 @@ func (s *Forgejo) listFilesByContents(ctx context.Context, owner, repo, commit s
 		return out[i].Path < out[j].Path
 	})
 	return out, nil
-}
-
-func (s *Forgejo) getDirectoryContents(ctx context.Context, owner, repo, commit, dir string) ([]contentItem, error) {
-	dir = normalizePath(dir)
-	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/contents",
-		s.baseURL,
-		url.PathEscape(owner),
-		url.PathEscape(repo),
-	)
-	if dir != "" {
-		endpoint += "/" + escapePath(dir)
-	}
-	query := url.Values{}
-	query.Set("ref", commit)
-	endpoint += "?" + query.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotFound:
-		return nil, ErrNotFound
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, ErrUnauthorized
-	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("source: forgejo contents request failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
-	rawTrim := strings.TrimSpace(string(raw))
-	if rawTrim == "" {
-		return nil, nil
-	}
-
-	if strings.HasPrefix(rawTrim, "[") {
-		var items []contentItem
-		if err := json.Unmarshal(raw, &items); err != nil {
-			return nil, fmt.Errorf("source: unable to decode directory contents: %w", err)
-		}
-		return items, nil
-	}
-
-	var one contentItem
-	if err := json.Unmarshal(raw, &one); err != nil {
-		return nil, fmt.Errorf("source: unable to decode contents response: %w", err)
-	}
-	// A single-object response means the path is a file; return it as a one-item list.
-	return []contentItem{one}, nil
 }
 
 func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error) {
