@@ -20,8 +20,7 @@ type RepositorySource interface {
 	ReadFile(ctx context.Context, owner, repo, commit, filePath string) ([]byte, error)
 	ListFiles(ctx context.Context, owner, repo, commit string) ([]Entry, error)
 	OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error)
-	ListOwners(ctx context.Context) ([]string, error)
-	ListRepos(ctx context.Context, owner string) ([]string, error)
+	SearchRepos(ctx context.Context, query string) ([]string, error)
 	ListBranches(ctx context.Context, owner, repo string) ([]string, error)
 	UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message string) error
 }

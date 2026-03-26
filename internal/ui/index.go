@@ -652,13 +652,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           <section class="card">
             <div class="card-title">Repository</div>
             <div class="grid">
-              <label>Owner
-                <input id="ownerFilter" placeholder="Filter owners&hellip;" autocomplete="off" style="margin-bottom:4px;" />
-                <select id="owner" size="3"></select>
-              </label>
               <label>Repository
-                <input id="repoFilter" placeholder="Filter repos&hellip;" autocomplete="off" style="margin-bottom:4px;" />
-                <select id="repo" size="4" disabled></select>
+                <input id="repo" list="repoOptions" placeholder="owner/repo" autocomplete="off" />
+                <datalist id="repoOptions"></datalist>
               </label>
               <label>Branch / Ref
                 <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
@@ -794,10 +790,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       };
 
       const nodes = {
-        owner: document.getElementById("owner"),
-        ownerFilter: document.getElementById("ownerFilter"),
         repo: document.getElementById("repo"),
-        repoFilter: document.getElementById("repoFilter"),
+        repoOptions: document.getElementById("repoOptions"),
         ref: document.getElementById("ref"),
         branchOptions: document.getElementById("branchOptions"),
         repoSummary: document.getElementById("repoSummary"),
@@ -878,12 +872,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
 
-        nodes.owner.addEventListener("change", () => run(onOwnerChanged));
-        nodes.repo.addEventListener("change", () => run(onRepoChanged));
-        nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); });
+        nodes.repo.addEventListener("input", debounce(() => {
+          run(() => searchRepos(nodes.repo.value));
+        }, 300));
+        nodes.repo.addEventListener("change", () => { run(onRepoChanged); run(loadConfig); });
+        nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); run(loadConfig); });
         nodes.ref.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
-        nodes.ownerFilter.addEventListener("input", () => filterSelect(nodes.owner, nodes.ownerFilter.value));
-        nodes.repoFilter.addEventListener("input", () => filterSelect(nodes.repo, nodes.repoFilter.value));
         nodes.preset.addEventListener("change", updateShareURL);
         nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
         nodes.includeGlobs.addEventListener("input", updateShareURL);
@@ -1008,71 +1002,35 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       /* ---- Data loading ---- */
       async function initData() {
         try {
-          await loadOwners();
+          await searchRepos("");
         } catch (e) {
-          setMessage("Failed to load owners: " + e.message, "error");
-          return;
+          setMessage("Failed to load repositories: " + e.message, "error");
         }
-        try {
-          await onOwnerChanged();
-        } catch (_e) {}
-        try {
-          await onRepoChanged();
-        } catch (_e) {}
-        try {
-          await loadConfig();
-        } catch (_e) {}
       }
 
       function currentSelection() {
-        const owner = nodes.owner.value.trim();
-        const repo = nodes.repo.value.trim();
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return null;
+        const owner = parts[0];
+        const repo = parts.slice(1).join("/");
         const ref = nodes.ref.value.trim();
-        if (!owner || !repo) {
-          return null;
-        }
         return { owner, repo, ref };
       }
 
       function updateRepoSummary() {
-        const owner = nodes.owner.value;
-        const repo = nodes.repo.value;
-        const ref = nodes.ref.value.trim();
-        if (owner && repo) {
-          nodes.repoSummary.textContent = owner + " / " + repo + (ref ? "  @  " + ref : "");
+        const sel = currentSelection();
+        if (sel) {
+          nodes.repoSummary.textContent = sel.owner + " / " + sel.repo + (sel.ref ? "  @  " + sel.ref : "");
           nodes.repoSummary.hidden = false;
         } else {
           nodes.repoSummary.hidden = true;
         }
       }
 
-      async function loadOwners() {
-        const payload = await apiFetch("/api/owners", { credentials: "same-origin" });
-        const owners = payload.owners || [];
-        populateSelect(nodes.owner, owners);
-        nodes.ownerFilter.placeholder = owners.length ? "Filter owners\u2026" : "No owners found";
-        nodes.ownerFilter.disabled = owners.length === 0;
-      }
-
-      async function onOwnerChanged() {
-        updateShareURL();
-        updateRepoSummary();
-        const owner = nodes.owner.value;
-        if (!owner) {
-          populateSelect(nodes.repo, []);
-          nodes.repo.disabled = true;
-          setDatalist(nodes.branchOptions, []);
-          return;
-        }
-        nodes.repo.disabled = true;
-        populateSelect(nodes.repo, []);
-        const payload = await apiFetch("/api/owners/" + encodeURIComponent(owner) + "/repos", { credentials: "same-origin" });
-        const repos = payload.repos || [];
-        populateSelect(nodes.repo, repos);
-        nodes.repo.disabled = repos.length === 0;
-        nodes.repoFilter.disabled = repos.length === 0;
-        nodes.repoFilter.value = "";
-        updateRepoSummary();
+      async function searchRepos(q) {
+        const payload = await apiFetch("/api/repos/search?q=" + encodeURIComponent(q), { credentials: "same-origin" });
+        setDatalist(nodes.repoOptions, payload.repos || []);
       }
 
       async function onRepoChanged() {

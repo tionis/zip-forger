@@ -28,12 +28,6 @@ type Forgejo struct {
 	client  *http.Client
 }
 
-type repoSummary struct {
-	Name  string `json:"name"`
-	Owner struct {
-		Login string `json:"login"`
-	} `json:"owner"`
-}
 
 func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	baseURL := strings.TrimSpace(strings.TrimSuffix(cfg.BaseURL, "/"))
@@ -178,56 +172,29 @@ func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath st
 	return s.downloadLFSObject(ctx, owner, repo, pointer.OID, pointer.Size)
 }
 
-func (s *Forgejo) ListOwners(ctx context.Context) ([]string, error) {
-	repos, err := s.listUserRepos(ctx)
-	if err != nil {
+func (s *Forgejo) SearchRepos(ctx context.Context, query string) ([]string, error) {
+	q := url.Values{}
+	if query != "" {
+		q.Set("q", query)
+	}
+	q.Set("limit", "50")
+	endpoint := s.baseURL + "/api/v1/repos/search?" + q.Encode()
+
+	var payload struct {
+		Data []struct {
+			FullName string `json:"full_name"`
+		} `json:"data"`
+	}
+	if err := s.getJSON(ctx, endpoint, &payload); err != nil {
 		return nil, err
 	}
 
-	seen := make(map[string]struct{}, len(repos))
-	out := make([]string, 0, len(repos))
-	for _, repo := range repos {
-		owner := strings.TrimSpace(repo.Owner.Login)
-		if owner == "" {
-			continue
+	out := make([]string, 0, len(payload.Data))
+	for _, repo := range payload.Data {
+		if repo.FullName != "" {
+			out = append(out, repo.FullName)
 		}
-		if _, ok := seen[owner]; ok {
-			continue
-		}
-		seen[owner] = struct{}{}
-		out = append(out, owner)
 	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func (s *Forgejo) ListRepos(ctx context.Context, owner string) ([]string, error) {
-	owner = strings.TrimSpace(owner)
-	if owner == "" {
-		return nil, nil
-	}
-
-	repos, err := s.listUserRepos(ctx)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(repos))
-	for _, repo := range repos {
-		if !strings.EqualFold(strings.TrimSpace(repo.Owner.Login), owner) {
-			continue
-		}
-		name := strings.TrimSpace(repo.Name)
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
-	}
-	sort.Strings(out)
 	return out, nil
 }
 
@@ -770,105 +737,6 @@ func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath 
 		return "", ErrNotFound
 	}
 	return payload.SHA, nil
-}
-
-func (s *Forgejo) listUserRepos(ctx context.Context) ([]repoSummary, error) {
-	// Preferred path: /user/repos returns every repo the token owner can
-	// access (personal + org + collaborative) and requires read:user scope.
-	repos, err := s.fetchUserRepos(ctx)
-	if err == nil {
-		return repos, nil
-	}
-	if !errors.Is(err, ErrUnauthorized) {
-		return nil, err
-	}
-
-	// Fallback when read:user scope is not available: stitch together results
-	// from /repos/search using the modes Forgejo supports.
-	uid := s.currentUserID(ctx)
-	seen := make(map[string]struct{})
-	var out []repoSummary
-	for _, mode := range []string{"", "collaborative", "member"} {
-		results, err := s.searchRepos(ctx, mode, uid)
-		if errors.Is(err, ErrUnsupportedSearchMode) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range results {
-			key := r.Owner.Login + "/" + r.Name
-			if _, ok := seen[key]; !ok {
-				seen[key] = struct{}{}
-				out = append(out, r)
-			}
-		}
-	}
-	return out, nil
-}
-
-// fetchUserRepos calls /api/v1/user/repos — the canonical "all my repos"
-// endpoint. Requires read:user OAuth scope.
-func (s *Forgejo) fetchUserRepos(ctx context.Context) ([]repoSummary, error) {
-	const pageLimit = 100
-	page := 1
-	var out []repoSummary
-	for {
-		query := url.Values{}
-		query.Set("page", strconv.Itoa(page))
-		query.Set("limit", strconv.Itoa(pageLimit))
-		endpoint := s.baseURL + "/api/v1/user/repos?" + query.Encode()
-		var payload []repoSummary
-		if err := s.getJSON(ctx, endpoint, &payload); err != nil {
-			return nil, err
-		}
-		out = append(out, payload...)
-		if len(payload) < pageLimit {
-			break
-		}
-		page++
-	}
-	return out, nil
-}
-
-// currentUserID fetches the current user's numeric ID via /api/v1/user.
-// Returns 0 on failure; callers treat 0 as "no uid filter".
-func (s *Forgejo) currentUserID(ctx context.Context) int64 {
-	var me struct {
-		ID int64 `json:"id"`
-	}
-	_ = s.getJSON(ctx, s.baseURL+"/api/v1/user", &me)
-	return me.ID
-}
-
-func (s *Forgejo) searchRepos(ctx context.Context, mode string, uid int64) ([]repoSummary, error) {
-	const pageLimit = 100
-	page := 1
-	var out []repoSummary
-	for {
-		query := url.Values{}
-		query.Set("page", strconv.Itoa(page))
-		query.Set("limit", strconv.Itoa(pageLimit))
-		if mode != "" {
-			query.Set("mode", mode)
-		}
-		if uid > 0 {
-			query.Set("uid", strconv.FormatInt(uid, 10))
-		}
-		endpoint := s.baseURL + "/api/v1/repos/search?" + query.Encode()
-		var payload struct {
-			Data []repoSummary `json:"data"`
-		}
-		if err := s.getJSON(ctx, endpoint, &payload); err != nil {
-			return nil, err
-		}
-		out = append(out, payload.Data...)
-		if len(payload.Data) < pageLimit {
-			break
-		}
-		page++
-	}
-	return out, nil
 }
 
 func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error {

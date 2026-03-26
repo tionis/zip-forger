@@ -48,36 +48,20 @@ presets:
 		t.Fatalf("expected ui response to contain app title")
 	}
 
-	ownersReq := httptest.NewRequest(http.MethodGet, "/api/owners", nil)
-	ownersResp := httptest.NewRecorder()
-	handler.ServeHTTP(ownersResp, ownersReq)
-	if ownersResp.Code != http.StatusOK {
-		t.Fatalf("owners status=%d body=%s", ownersResp.Code, ownersResp.Body.String())
+	searchReq := httptest.NewRequest(http.MethodGet, "/api/repos/search", nil)
+	searchResp := httptest.NewRecorder()
+	handler.ServeHTTP(searchResp, searchReq)
+	if searchResp.Code != http.StatusOK {
+		t.Fatalf("search status=%d body=%s", searchResp.Code, searchResp.Body.String())
 	}
-	var ownersPayload struct {
-		Owners []string `json:"owners"`
-	}
-	if err := json.Unmarshal(ownersResp.Body.Bytes(), &ownersPayload); err != nil {
-		t.Fatalf("owners json decode failed: %v", err)
-	}
-	if len(ownersPayload.Owners) != 1 || ownersPayload.Owners[0] != "acme" {
-		t.Fatalf("unexpected owners payload: %#v", ownersPayload)
-	}
-
-	reposReq := httptest.NewRequest(http.MethodGet, "/api/owners/acme/repos", nil)
-	reposResp := httptest.NewRecorder()
-	handler.ServeHTTP(reposResp, reposReq)
-	if reposResp.Code != http.StatusOK {
-		t.Fatalf("repos status=%d body=%s", reposResp.Code, reposResp.Body.String())
-	}
-	var reposPayload struct {
+	var searchPayload struct {
 		Repos []string `json:"repos"`
 	}
-	if err := json.Unmarshal(reposResp.Body.Bytes(), &reposPayload); err != nil {
-		t.Fatalf("repos json decode failed: %v", err)
+	if err := json.Unmarshal(searchResp.Body.Bytes(), &searchPayload); err != nil {
+		t.Fatalf("search json decode failed: %v", err)
 	}
-	if len(reposPayload.Repos) != 1 || reposPayload.Repos[0] != "rules" {
-		t.Fatalf("unexpected repos payload: %#v", reposPayload)
+	if len(searchPayload.Repos) != 1 || searchPayload.Repos[0] != "acme/rules" {
+		t.Fatalf("unexpected search payload: %#v", searchPayload)
 	}
 
 	branchesReq := httptest.NewRequest(http.MethodGet, "/api/repos/acme/rules/branches", nil)

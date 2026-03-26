@@ -122,7 +122,7 @@ func (s *LocalFS) OpenFile(_ context.Context, owner, repo, commit, filePath stri
 	return f, err
 }
 
-func (s *LocalFS) ListOwners(_ context.Context) ([]string, error) {
+func (s *LocalFS) SearchRepos(_ context.Context, query string) ([]string, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -130,29 +130,26 @@ func (s *LocalFS) ListOwners(_ context.Context) ([]string, error) {
 		}
 		return nil, err
 	}
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			out = append(out, entry.Name())
+	var out []string
+	query = strings.ToLower(query)
+	for _, ownerEntry := range entries {
+		if !ownerEntry.IsDir() {
+			continue
 		}
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func (s *LocalFS) ListRepos(_ context.Context, owner string) ([]string, error) {
-	root := filepath.Join(s.root, owner)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrNotFound
+		owner := ownerEntry.Name()
+		repoEntries, err := os.ReadDir(filepath.Join(s.root, owner))
+		if err != nil {
+			continue
 		}
-		return nil, err
-	}
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			out = append(out, entry.Name())
+		for _, repoEntry := range repoEntries {
+			if !repoEntry.IsDir() {
+				continue
+			}
+			repo := repoEntry.Name()
+			fullName := owner + "/" + repo
+			if query == "" || strings.Contains(strings.ToLower(fullName), query) {
+				out = append(out, fullName)
+			}
 		}
 	}
 	sort.Strings(out)

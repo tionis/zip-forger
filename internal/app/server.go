@@ -124,21 +124,18 @@ func (s *Server) Handler() http.Handler {
 	downloadHandler := http.Handler(http.HandlerFunc(s.handleDownload))
 	configGetHandler := http.Handler(http.HandlerFunc(s.handleConfig))
 	configPutHandler := http.Handler(http.HandlerFunc(s.handleUpdateConfig))
-	ownersHandler := http.Handler(http.HandlerFunc(s.handleOwners))
-	reposHandler := http.Handler(http.HandlerFunc(s.handleRepos))
+	searchReposHandler := http.Handler(http.HandlerFunc(s.handleSearchRepos))
 	branchesHandler := http.Handler(http.HandlerFunc(s.handleBranches))
 	if s.auth != nil {
 		previewHandler = s.auth.Middleware(previewHandler)
 		downloadHandler = s.auth.Middleware(downloadHandler)
 		configGetHandler = s.auth.Middleware(configGetHandler)
 		configPutHandler = s.auth.Middleware(configPutHandler)
-		ownersHandler = s.auth.Middleware(ownersHandler)
-		reposHandler = s.auth.Middleware(reposHandler)
+		searchReposHandler = s.auth.Middleware(searchReposHandler)
 		branchesHandler = s.auth.Middleware(branchesHandler)
 	}
 
-	mux.Handle("GET /api/owners", ownersHandler)
-	mux.Handle("GET /api/owners/{owner}/repos", reposHandler)
+	mux.Handle("GET /api/repos/search", searchReposHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/branches", branchesHandler)
 	mux.Handle("POST /api/repos/{owner}/{repo}/preview", previewHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/download.zip", downloadHandler)
@@ -192,35 +189,14 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleOwners(w http.ResponseWriter, r *http.Request) {
-	owners, err := s.source.ListOwners(r.Context())
+func (s *Server) handleSearchRepos(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	repos, err := s.source.SearchRepos(r.Context(), q)
 	if err != nil {
-		s.writeAPIError(w, sourceErrorToAPI(err, "unable to list owners"))
+		s.writeAPIError(w, sourceErrorToAPI(err, "unable to search repositories"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"owners": owners,
-	})
-}
-
-func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
-	owner := strings.TrimSpace(r.PathValue("owner"))
-	if owner == "" {
-		s.writeAPIError(w, &apiError{
-			status:  http.StatusBadRequest,
-			code:    "invalid_owner",
-			message: "owner is required",
-		})
-		return
-	}
-
-	repos, err := s.source.ListRepos(r.Context(), owner)
-	if err != nil {
-		s.writeAPIError(w, sourceErrorToAPI(err, "unable to list repositories"))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"owner": owner,
 		"repos": repos,
 	})
 }
