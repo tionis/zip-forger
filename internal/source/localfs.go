@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"zip-forger/internal/filter"
 )
 
 type LocalFS struct {
@@ -71,7 +73,7 @@ func (s *LocalFS) ReadFile(_ context.Context, owner, repo, commit, filePath stri
 	return data, err
 }
 
-func (s *LocalFS) ListFiles(_ context.Context, owner, repo, commit string) ([]Entry, error) {
+func (s *LocalFS) ListFiles(_ context.Context, owner, repo, commit string, _ filter.Criteria) ([]Entry, error) {
 	base := filepath.Join(s.root, owner, repo, commit)
 	info, err := os.Stat(base)
 	if err != nil || !info.IsDir() {

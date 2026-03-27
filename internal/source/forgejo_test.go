@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"zip-forger/internal/filter"
 )
 
 func TestForgejoResolveListAndOpen(t *testing.T) {
@@ -28,16 +30,34 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 					return response(http.StatusOK, `{"commit":{"id":"commit-sha"}}`), nil
 
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
+				        return response(http.StatusOK, `{
+				"sha":"commit-sha",
+				"truncated":false,
+				"tree":[
+				{"path":"rules/core","type":"tree"},
+				{"path":"rules/core/guide.pdf","type":"blob","size":12},
+				{"path":"rules/core/notes.txt","type":"blob","size":9}
+				]
+				}`), nil
+
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
   "sha":"commit-sha",
   "truncated":false,
   "tree":[
-    {"path":"rules/core","type":"tree"},
-    {"path":"rules/core/guide.pdf","type":"blob","size":12},
-    {"path":"rules/core/notes.txt","type":"blob","size":9}
+    {"path":"rules/core","type":"tree", "sha":"sub-sha"}
   ]
 }`), nil
 
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha" && r.URL.Query().Get("recursive") == "true":
+					return response(http.StatusOK, `{
+  "sha":"sub-sha",
+  "truncated":false,
+  "tree":[
+    {"path":"guide.pdf","type":"blob","size":12},
+    {"path":"notes.txt","type":"blob","size":9}
+  ]
+}`), nil
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/rules/core/guide.pdf" && r.URL.Query().Get("ref") == "commit-sha":
 					return response(http.StatusOK, "pdf-content"), nil
 				}
@@ -58,7 +78,7 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 		t.Fatalf("unexpected commit: %s", commit)
 	}
 
-	entries, err := client.ListFiles(ctx, "acme", "rules", commit)
+	entries, err := client.ListFiles(ctx, "acme", "rules", commit, filter.Criteria{})
 	if err != nil {
 		t.Fatalf("ListFiles failed: %v", err)
 	}
@@ -182,7 +202,7 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
 	}
 
 	ctx := WithAccessToken(context.Background(), "tok-123")
-	entries, err := client.ListFiles(ctx, "acme", "rules", "commit-sha")
+	entries, err := client.ListFiles(ctx, "acme", "rules", "commit-sha", filter.Criteria{})
 	if err != nil {
 		t.Fatalf("ListFiles failed: %v", err)
 	}

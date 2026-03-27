@@ -413,7 +413,7 @@ func (s *Server) buildSelection(ctx context.Context, owner, repo, ref, preset st
 		}, nil
 	}
 
-	allFiles, err := s.source.ListFiles(ctx, owner, repo, commit)
+	allFiles, err := s.source.ListFiles(ctx, owner, repo, commit, finalCriteria)
 	if err != nil {
 		if errors.Is(err, source.ErrUnauthorized) {
 			return selection{}, &apiError{

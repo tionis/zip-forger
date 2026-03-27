@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"zip-forger/internal/filter"
 )
 
 type ForgejoConfig struct {
@@ -37,6 +38,7 @@ type TreeDB interface {
 		SHA  string
 	}) error
 	GetFullTree(ctx context.Context, rootSHA string) ([]Entry, error)
+	Search(ctx context.Context, rootSHA string, criteria filter.Criteria) ([]Entry, error)
 }
 
 type Forgejo struct {
@@ -102,35 +104,8 @@ func (s *Forgejo) ReadFile(ctx context.Context, owner, repo, commit, filePath st
 	return io.ReadAll(reader)
 }
 
-func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, pathPrefixes []string) ([]Entry, error) {
-	tree, err := s.getTree(ctx, owner, repo, commit, true)
-	if err != nil {
-		return nil, err
-	}
-
-	if !tree.Truncated {
-		entries := make([]Entry, 0, len(tree.Tree))
-		for _, node := range tree.Tree {
-			if node.Type != "blob" {
-				continue
-			}
-			p := normalizePath(node.Path)
-			if p == "" {
-				continue
-			}
-			entries = append(entries, Entry{
-				Path: p,
-				Size: node.Size,
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Path < entries[j].Path
-		})
-		return entries, nil
-	}
-
-	// Recursive tree endpoint can truncate for large repositories; walk sub-trees instead.
-	return s.listFilesByTrees(ctx, owner, repo, commit, pathPrefixes)
+func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, criteria filter.Criteria) ([]Entry, error) {
+	return s.listFilesByTrees(ctx, owner, repo, commit, criteria)
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
@@ -615,7 +590,7 @@ type treeTask struct {
 	isRoot bool
 }
 
-func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit string, pathPrefixes []string) ([]Entry, error) {
+func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit string, criteria filter.Criteria) ([]Entry, error) {
 	// 1. Resolve root tree SHA
 	rootTree, err := s.getTree(ctx, owner, repo, commit, false)
 	if err != nil {
