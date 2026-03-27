@@ -15,19 +15,35 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type ForgejoConfig struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	TreeDB     TreeDB
+}
+
+type TreeDB interface {
+	IsIndexed(ctx context.Context, sha string) (bool, error)
+	MarkIndexed(ctx context.Context, sha string) error
+	SaveEntries(ctx context.Context, parentSHA string, entries []struct {
+		Path string
+		Type string
+		Size int64
+		SHA  string
+	}) error
+	GetFullTree(ctx context.Context, rootSHA string) ([]Entry, error)
 }
 
 type Forgejo struct {
 	baseURL string
 	client  *http.Client
+	db      TreeDB
 }
-
 
 func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	baseURL := strings.TrimSpace(strings.TrimSuffix(cfg.BaseURL, "/"))
@@ -43,6 +59,7 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	return &Forgejo{
 		baseURL: baseURL,
 		client:  client,
+		db:      cfg.TreeDB,
 	}, nil
 }
 
@@ -85,7 +102,7 @@ func (s *Forgejo) ReadFile(ctx context.Context, owner, repo, commit, filePath st
 	return io.ReadAll(reader)
 }
 
-func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string) ([]Entry, error) {
+func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, pathPrefixes []string) ([]Entry, error) {
 	tree, err := s.getTree(ctx, owner, repo, commit, true)
 	if err != nil {
 		return nil, err
@@ -113,7 +130,7 @@ func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string) ([]
 	}
 
 	// Recursive tree endpoint can truncate for large repositories; walk sub-trees instead.
-	return s.listFilesByTrees(ctx, owner, repo, commit)
+	return s.listFilesByTrees(ctx, owner, repo, commit, pathPrefixes)
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
@@ -592,110 +609,124 @@ func (s *Forgejo) getTree(ctx context.Context, owner, repo, ref string, recursiv
 	return payload, nil
 }
 
-type treeItem struct {
-	path string
-	sha  string
+type treeTask struct {
+	path   string
+	sha    string
+	isRoot bool
 }
 
-func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit string) ([]Entry, error) {
-	// Start by fetching the root tree non-recursively.
+func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit string, pathPrefixes []string) ([]Entry, error) {
+	// 1. Resolve root tree SHA
 	rootTree, err := s.getTree(ctx, owner, repo, commit, false)
 	if err != nil {
 		return nil, err
 	}
+	rootSHA := rootTree.SHA
 
-	var out []Entry
-	var queue []treeItem
-	for _, node := range rootTree.Tree {
-		if node.Type == "blob" {
-			out = append(out, Entry{Path: normalizePath(node.Path), Size: node.Size})
-		} else if node.Type == "tree" && node.SHA != "" {
-			queue = append(queue, treeItem{path: node.Path, sha: node.SHA})
+	// 2. Check if this root tree is indexed
+	if s.db != nil {
+		if indexed, _ := s.db.IsIndexed(ctx, rootSHA); indexed {
+			return s.db.GetFullTree(ctx, rootSHA)
 		}
 	}
 
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
+	// 3. Concurrent Walk
+	var (
+		outMu sync.Mutex
+		out   []Entry
+		
+		sem = make(chan struct{}, 10) 
+	)
 
-		// Fetch the subtree recursively
-		subtree, err := s.getTree(ctx, owner, repo, current.sha, true)
-		if err != nil {
-			return nil, err
-		}
+	g, ctx := errgroup.WithContext(ctx)
+	var wg sync.WaitGroup
+	
+	var spawnTask func(task treeTask)
+	spawnTask = func(task treeTask) {
+		wg.Add(1)
+		g.Go(func() error {
+			defer wg.Done()
+			
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 
-		if !subtree.Truncated {
-			for _, node := range subtree.Tree {
-				if node.Type == "blob" {
-					fullPath := current.path + "/" + node.Path
-					out = append(out, Entry{Path: normalizePath(fullPath), Size: node.Size})
+			var tree treeResponse
+			var fetchErr error
+			if task.isRoot {
+				tree = rootTree
+			} else {
+				// To keep it simple and robust, we fetch recursively.
+				// If it is truncated, we will get the partial results and THEN 
+				// spawn tasks for the sub-trees that we discovered.
+				tree, fetchErr = s.getTree(ctx, owner, repo, task.sha, true)
+				if fetchErr != nil {
+					return fetchErr
 				}
 			}
-		} else {
-			// If it truncated even recursively, fallback to non-recursive for this subtree
-			subtreeNonRec, err := s.getTree(ctx, owner, repo, current.sha, false)
-			if err != nil {
-				return nil, err
+
+			var entriesToSave []struct {
+				Path string
+				Type string
+				Size int64
+				SHA  string
 			}
-			for _, node := range subtreeNonRec.Tree {
-				fullPath := current.path + "/" + node.Path
+
+			for _, node := range tree.Tree {
+				entriesToSave = append(entriesToSave, struct {
+					Path string
+					Type string
+					Size int64
+					SHA  string
+				}{Path: node.Path, Type: node.Type, Size: node.Size, SHA: node.SHA})
+
+				fullPath := node.Path
+				if task.path != "" {
+					fullPath = task.path + "/" + node.Path
+				}
+
 				if node.Type == "blob" {
+					outMu.Lock()
 					out = append(out, Entry{Path: normalizePath(fullPath), Size: node.Size})
+					outMu.Unlock()
 				} else if node.Type == "tree" && node.SHA != "" {
-					queue = append(queue, treeItem{path: fullPath, sha: node.SHA})
+					if tree.Truncated || task.isRoot {
+						spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
+					}
 				}
 			}
-		}
+
+			if s.db != nil {
+				_ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
+				if !tree.Truncated {
+					_ = s.db.MarkIndexed(ctx, task.sha)
+				}
+			}
+			return nil
+		})
+	}
+
+	spawnTask(treeTask{path: "", sha: rootSHA, isRoot: true})
+
+	go func() {
+		wg.Wait()
+	}()
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	if s.db != nil {
+		_ = s.db.MarkIndexed(ctx, rootSHA)
 	}
 
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Path < out[j].Path
 	})
 	return out, nil
-}
-
-func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error) {
-	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/contents/%s?ref=%s",
-		s.baseURL,
-		url.PathEscape(owner),
-		url.PathEscape(repo),
-		escapePath(filePath),
-		url.QueryEscape(branch),
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotFound:
-		return "", ErrNotFound
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return "", ErrUnauthorized
-	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return "", fmt.Errorf("source: forgejo get file metadata failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	var payload struct {
-		SHA string `json:"sha"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(payload.SHA) == "" {
-		return "", ErrNotFound
-	}
-	return payload.SHA, nil
 }
 
 func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error {
@@ -762,4 +793,48 @@ func normalizePath(value string) string {
 		return ""
 	}
 	return value
+}
+
+func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error) {
+	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/contents/%s?ref=%s",
+		s.baseURL,
+		url.PathEscape(owner),
+		url.PathEscape(repo),
+		escapePath(filePath),
+		url.QueryEscape(branch),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	s.addAuthHeader(req, ctx)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return "", ErrNotFound
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", ErrUnauthorized
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return "", fmt.Errorf("source: forgejo get file metadata failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var payload struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.SHA) == "" {
+		return "", ErrNotFound
+	}
+	return payload.SHA, nil
 }
