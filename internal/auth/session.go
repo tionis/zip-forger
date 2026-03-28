@@ -16,6 +16,7 @@ import (
 type Session struct {
 	AccessToken string    `json:"accessToken"`
 	TokenType   string    `json:"tokenType,omitempty"`
+	Scope       string    `json:"scope,omitempty"`
 	ExpiresAt   time.Time `json:"expiresAt"`
 }
 

@@ -125,7 +125,7 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, _, err := m.extractToken(r)
+		token, _, _, err := m.extractToken(r)
 		if err != nil {
 			if m.cfg.Required {
 				writeAuthError(w, http.StatusUnauthorized, "authentication_failed", "invalid authentication session")
@@ -188,7 +188,7 @@ func (m *Manager) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, tokenType, expiresAt, err := m.exchangeCode(r.Context(), code)
+	token, tokenType, tokenScope, expiresAt, err := m.exchangeCode(r.Context(), code)
 	if err != nil {
 		m.logger.Printf("auth callback exchange failed: %v", err)
 		writeAuthError(w, http.StatusBadGateway, "token_exchange_failed", "unable to exchange oauth code")
@@ -201,6 +201,7 @@ func (m *Manager) handleCallback(w http.ResponseWriter, r *http.Request) {
 	session := Session{
 		AccessToken: token,
 		TokenType:   tokenType,
+		Scope:       tokenScope,
 		ExpiresAt:   expiresAt,
 	}
 	encoded, err := m.codec.Encode(session)
@@ -231,7 +232,7 @@ func (m *Manager) handleLogout(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (m *Manager) handleMe(w http.ResponseWriter, r *http.Request) {
-	token, sourceName, err := m.extractToken(r)
+	token, scope, sourceName, err := m.extractToken(r)
 	if err != nil {
 		writeAuthError(w, http.StatusUnauthorized, "authentication_failed", "invalid authentication session")
 		return
@@ -245,37 +246,38 @@ func (m *Manager) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
 		"source":        sourceName,
+		"scope":         scope,
 	})
 }
 
-func (m *Manager) extractToken(r *http.Request) (token, sourceName string, err error) {
+func (m *Manager) extractToken(r *http.Request) (token, scope, sourceName string, err error) {
 	if headerToken := bearerTokenFromHeader(r.Header.Get("Authorization")); headerToken != "" {
-		return headerToken, "authorization_header", nil
+		return headerToken, "", "authorization_header", nil
 	}
 
 	if m.codec == nil {
-		return "", "", nil
+		return "", "", "", nil
 	}
 
 	cookie, err := r.Cookie(m.cfg.CookieName)
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
-			return "", "", nil
+			return "", "", "", nil
 		}
-		return "", "", err
+		return "", "", "", err
 	}
 
 	session, err := m.codec.Decode(cookie.Value)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if !session.ExpiresAt.IsZero() && time.Now().After(session.ExpiresAt) {
-		return "", "", errors.New("auth: session expired")
+		return "", "", "", errors.New("auth: session expired")
 	}
-	return session.AccessToken, "session_cookie", nil
+	return session.AccessToken, session.Scope, "session_cookie", nil
 }
 
-func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, tokenType string, expiresAt time.Time, err error) {
+func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, tokenType, scope string, expiresAt time.Time, err error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("client_id", m.cfg.ClientID)
@@ -286,45 +288,46 @@ func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, t
 	endpoint := m.cfg.ForgejoBaseURL + "/login/oauth/access_token"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		return "", "", time.Time{}, fmt.Errorf("oauth exchange failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", "", "", time.Time{}, fmt.Errorf("oauth exchange failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
 		TokenType   string `json:"token_type"`
 		ExpiresIn   int64  `json:"expires_in"`
+		Scope       string `json:"scope"`
 		Error       string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &tokenResponse); err != nil || tokenResponse.AccessToken == "" {
 		parsed, parseErr := url.ParseQuery(string(body))
-		if parseErr != nil {
-			if err != nil {
-				return "", "", time.Time{}, err
-			}
-			return "", "", time.Time{}, errors.New("auth: token response missing access token")
+		if parseErr == nil && parsed.Get("access_token") != "" {
+			tokenResponse.AccessToken = parsed.Get("access_token")
+			tokenResponse.TokenType = parsed.Get("token_type")
+			tokenResponse.Scope = parsed.Get("scope")
+		} else {
+			return "", "", "", time.Time{}, fmt.Errorf("auth: token response invalid: %s", string(body))
 		}
-		tokenResponse.AccessToken = parsed.Get("access_token")
-		tokenResponse.TokenType = parsed.Get("token_type")
 	}
+	m.logger.Printf("auth: token exchange successful, scope granted: %q", tokenResponse.Scope)
 
 	if tokenResponse.AccessToken == "" {
-		return "", "", time.Time{}, errors.New("auth: oauth exchange did not return access token")
+		return "", "", "", time.Time{}, errors.New("auth: oauth exchange did not return access token")
 	}
 	if tokenResponse.TokenType == "" {
 		tokenResponse.TokenType = "token"
@@ -333,7 +336,7 @@ func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, t
 		expiresAt = time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second)
 	}
 
-	return tokenResponse.AccessToken, tokenResponse.TokenType, expiresAt, nil
+	return tokenResponse.AccessToken, tokenResponse.TokenType, tokenResponse.Scope, expiresAt, nil
 }
 
 func (m *Manager) storeState(key string, value oauthState) {

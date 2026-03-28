@@ -287,8 +287,11 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return ErrUnauthorized
+	case http.StatusForbidden:
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("source: forbidden (check OAuth scopes): %s", strings.TrimSpace(string(respBody)))
 	case http.StatusNotFound:
 		return ErrNotFound
 	}
