@@ -9,11 +9,13 @@ import (
 type ProgressManager struct {
 	mu        sync.Mutex
 	listeners map[string][]chan int64 // key: owner/repo/commit
+	lastCount map[string]int64
 }
 
 func NewProgressManager() *ProgressManager {
 	return &ProgressManager{
 		listeners: make(map[string][]chan int64),
+		lastCount: make(map[string]int64),
 	}
 }
 
@@ -26,6 +28,8 @@ func (m *ProgressManager) Notify(owner, repo, commit string, count int64) {
 	defer m.mu.Unlock()
 
 	k := m.key(owner, repo, commit)
+	m.lastCount[k] = count
+
 	channels := m.listeners[k]
 	for _, ch := range channels {
 		select {
@@ -55,6 +59,7 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	k := m.key(owner, repo, commit)
 
 	m.mu.Lock()
+	initialCount := m.lastCount[k]
 	m.listeners[k] = append(m.listeners[k], ch)
 	m.mu.Unlock()
 
@@ -79,8 +84,8 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send initial heartbeat
-	fmt.Fprintf(w, "data: {\"count\": 0}\n\n")
+	// Send initial/cached count immediately
+	fmt.Fprintf(w, "data: {\"count\": %d}\n\n", initialCount)
 	flusher.Flush()
 
 	for {

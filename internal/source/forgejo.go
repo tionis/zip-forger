@@ -599,7 +599,12 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	// 2. Check if this root tree is fully indexed
 	if s.db != nil {
 		if indexed, _ := s.db.IsIndexed(ctx, rootSHA); indexed {
-			return s.db.Search(ctx, rootSHA, criteria)
+			entries, err := s.db.Search(ctx, rootSHA, criteria)
+			if err == nil && s.onProgress != nil {
+				// Report the total discovered count from the cache
+				s.onProgress(owner, repo, commit, int64(len(entries)))
+			}
+			return entries, err
 		}
 	}
 

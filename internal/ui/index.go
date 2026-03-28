@@ -643,7 +643,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (parts.length < 2) return;
         
         try {
+          // We start progress tracking with the ref, but we will RE-START it 
+          // once we get the real commit SHA from the backend.
           startProgressTracking(parts[0], parts[1], nodes.ref.value || "main");
+
           const payload = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/preview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -658,6 +661,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               }
             })
           });
+          // Restart tracking with the real immutable commit SHA
+          startProgressTracking(parts[0], parts[1], payload.commit);
+
           state.preview = payload;
           nodes.commitValue.textContent = payload.commit.substring(0,8);
           nodes.filesValue.textContent = payload.selectedFiles.toLocaleString();
