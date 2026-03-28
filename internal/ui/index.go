@@ -444,11 +444,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         <div class="card-title">Repository Configuration</div>
         <div class="grid">
           <label class="check"><input id="allowAdhocFilters" type="checkbox" /> Allow ad-hoc filters</label>
-          <div class="row-2">
-            <label>Max Files <input id="maxFilesPerDownload" type="number" /></label>
-            <label>Max Bytes <input id="maxBytesPerDownload" type="number" /></label>
-          </div>
-          <button class="ghost" id="addPresetBtn" type="button">Add Preset</button>
+          <button class="ghost" id="addPresetBtn" type="button" style="justify-self:start;">Add Preset</button>
           <div id="presetList" class="grid"></div>
           <button class="primary" id="saveConfigBtn" type="button">Save to Repository</button>
         </div>
@@ -492,8 +488,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         logoutBtn: document.getElementById("logoutBtn"),
         themeButtons: Array.from(document.querySelectorAll("[data-theme]")),
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
-        maxFilesPerDownload: document.getElementById("maxFilesPerDownload"),
-        maxBytesPerDownload: document.getElementById("maxBytesPerDownload"),
         addPresetBtn: document.getElementById("addPresetBtn"),
         saveConfigBtn: document.getElementById("saveConfigBtn"),
         presetList: document.getElementById("presetList")
@@ -680,8 +674,15 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (parts.length < 2) return;
         const query = nodes.ref.value ? "?ref=" + encodeURIComponent(nodes.ref.value) : "";
         const data = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config" + query);
-        state.config = data.config;
+        state.config = data.config || { version: 1, options: { allowAdhocFilters: true }, presets: [] };
         
+        updatePresetDropdown();
+        nodes.allowAdhocFilters.checked = state.config.options?.allowAdhocFilters !== false;
+        renderPresetEditor();
+        setMessage("Config loaded.", "ok");
+      }
+
+      function updatePresetDropdown() {
         nodes.preset.innerHTML = '<option value="">(none)</option>';
         (state.config.presets || []).forEach(p => {
           const opt = document.createElement("option");
@@ -689,13 +690,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           opt.textContent = p.id + (p.description ? " - " + p.description : "");
           nodes.preset.appendChild(opt);
         });
-
-        nodes.allowAdhocFilters.checked = state.config.options?.allowAdhocFilters !== false;
-        nodes.maxFilesPerDownload.value = state.config.options?.maxFilesPerDownload || "";
-        nodes.maxBytesPerDownload.value = state.config.options?.maxBytesPerDownload || "";
-        
-        renderPresetEditor();
-        setMessage("Config loaded.", "ok");
       }
 
       function renderPresetEditor() {
@@ -722,14 +716,19 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         } else {
           state.config.presets[idx][key] = val;
         }
+        updatePresetDropdown();
       };
 
       window.removePreset = (idx) => {
         state.config.presets.splice(idx, 1);
         renderPresetEditor();
+        updatePresetDropdown();
       };
 
       function addPresetRow() {
+        if (!state.config) {
+          state.config = { version: 1, options: { allowAdhocFilters: true }, presets: [] };
+        }
         state.config.presets = state.config.presets || [];
         state.config.presets.push({ id: "", description: "", extensions: [], pathPrefixes: [] });
         renderPresetEditor();
@@ -739,6 +738,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         const full = nodes.repo.value.trim();
         const parts = full.split("/");
         if (parts.length < 2) return;
+        state.config.options = state.config.options || {};
+        state.config.options.allowAdhocFilters = nodes.allowAdhocFilters.checked;
         await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
