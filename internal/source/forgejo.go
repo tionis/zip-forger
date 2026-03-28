@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -607,7 +609,8 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 	// 3. Concurrent Walk
 	var (
-		sem = make(chan struct{}, 20) 
+		sem = make(chan struct{}, 20)
+		count int64
 	)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -623,7 +626,21 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil // Don't return ctx.Err() as it masks the real error
+			}
+
+			var currentTree treeResponse
+			var fetchErr error
+			if task.isRoot {
+				currentTree = rootTree
+			} else {
+				// Use a dedicated timeout for each individual fetch
+				fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
+				if fetchErr != nil {
+					return fmt.Errorf("fetch %s failed: %w", task.path, fetchErr)
+				}
 			}
 
 			var entriesToSave []struct {
@@ -633,29 +650,12 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 				SHA  string
 			}
 
-			var currentTree treeResponse
-			if task.isRoot {
-				currentTree = rootTree
-			} else {
-				// To ensure the DB cache is perfectly consistent and normalized,
-				// we always fetch non-recursively during the walk.
-				var fetchErr error
-				currentTree, fetchErr = s.getTree(ctx, owner, repo, task.sha, false)
-				if fetchErr != nil {
-					return fetchErr
-				}
-			}
-
 			for _, node := range currentTree.Tree {
-				// Normalize the name: we want ONLY the immediate name (basename)
-				// to be stored in the 'path' column so the Recursive CTE can 
-				// join them correctly.
 				name := path.Base(normalizePath(node.Path))
 				if name == "" || name == "." {
 					continue
 				}
 
-				// Prepare for DB storage
 				entriesToSave = append(entriesToSave, struct {
 					Path string
 					Type string
@@ -669,8 +669,10 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 				}
 
 				if node.Type == "blob" {
-					// We dont need to add to 'out' here because we will 
-					// search the DB at the end.
+					c := atomic.AddInt64(&count, 1)
+					if c%1000 == 0 {
+						log.Printf("[INDEXER] Indexed %d files...", c)
+					}
 				} else if node.Type == "tree" && node.SHA != "" {
 					spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
 				}
