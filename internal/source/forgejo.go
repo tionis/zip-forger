@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"zip-forger/internal/filter"
 )
 
@@ -57,8 +56,6 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 
 	client := cfg.HTTPClient
 	if client == nil {
-		// Use a client without a global timeout for long-running indexing tasks.
-		// Individual requests are managed by context timeouts.
 		client = &http.Client{}
 	}
 
@@ -87,7 +84,6 @@ func (s *Forgejo) ResolveRef(ctx context.Context, owner, repo, ref string) (stri
 		return "", err
 	}
 
-	// Fallback for instances that do not expose commit lookup as expected.
 	tree, treeErr := s.getTree(ctx, owner, repo, ref, false)
 	if treeErr != nil {
 		return "", treeErr
@@ -602,131 +598,147 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	}
 	rootSHA := rootTree.SHA
 
-	// 2. Check if this root tree is indexed
+	// 2. Check if this root tree is fully indexed
 	if s.db != nil {
 		if indexed, _ := s.db.IsIndexed(ctx, rootSHA); indexed {
 			return s.db.Search(ctx, rootSHA, criteria)
 		}
 	}
 
-	// 3. Concurrent Walk
+	// 3. Worker Pool Setup
+	const numWorkers = 5
+	tasks := make(chan treeTask, 500000)
+	
 	var (
-		sem = make(chan struct{}, 5)
-		count int64
+		count       int64
+		activeTasks int32
 		
 		firstErr error
-		errMu    sync.Mutex
+		errMu    sync.Once
+		
+		seenTrees sync.Map // Map[string]bool
 	)
 
-	g, ctx := errgroup.WithContext(ctx)
-	
-	// Helper to capture the very first real error
 	setFirstErr := func(err error) {
 		if err == nil || errors.Is(err, context.Canceled) {
 			return
 		}
-		errMu.Lock()
-		defer errMu.Unlock()
-		if firstErr == nil {
+		errMu.Do(func() {
 			firstErr = err
-		}
-	}
-
-	var wg sync.WaitGroup
-	
-	var spawnTask func(task treeTask)
-	spawnTask = func(task treeTask) {
-		wg.Add(1)
-		g.Go(func() error {
-			defer wg.Done()
-			
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return nil
-			}
-
-			var currentTree treeResponse
-			var fetchErr error
-			if task.isRoot {
-				currentTree = rootTree
-			} else {
-				// Use a dedicated timeout for each individual fetch
-				fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-				defer cancel()
-				currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
-				if fetchErr != nil {
-					setFirstErr(fetchErr)
-					if !errors.Is(fetchErr, context.Canceled) {
-						log.Printf("[INDEXER FATAL ERROR] Fetch failed for %s: %v", task.path, fetchErr)
-						time.Sleep(1 * time.Second)
-					}
-					return fetchErr
-				}
-			}
-
-			var entriesToSave []struct {
-				Path string
-				Type string
-				Size int64
-				SHA  string
-			}
-
-			for _, node := range currentTree.Tree {
-				name := path.Base(normalizePath(node.Path))
-				if name == "" || name == "." {
-					continue
-				}
-
-				entriesToSave = append(entriesToSave, struct {
-					Path string
-					Type string
-					Size int64
-					SHA  string
-				}{Path: name, Type: node.Type, Size: node.Size, SHA: node.SHA})
-
-				fullPath := name
-				if task.path != "" {
-					fullPath = task.path + "/" + name
-				}
-
-				if node.Type == "blob" {
-					c := atomic.AddInt64(&count, 1)
-					if c%1000 == 0 {
-						log.Printf("[INDEXER] Indexed %d files...", c)
-					}
-				} else if node.Type == "tree" && node.SHA != "" {
-					spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
-				}
-			}
-
-			if s.db != nil {
-				if err := s.db.SaveEntries(ctx, task.sha, entriesToSave); err != nil {
-					setFirstErr(err)
-					log.Printf("[INDEXER DB ERROR] Failed to save entries for %s: %v", task.path, err)
-					return err
-				}
-			}
-			return nil
 		})
 	}
 
-	spawnTask(treeTask{path: "", sha: rootSHA, isRoot: true})
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case task, ok := <-tasks:
+					if !ok {
+						return
+					}
 
+					func() {
+						defer atomic.AddInt32(&activeTasks, -1)
+						
+						// Avoid re-indexing the same directory SHA
+						if !task.isRoot {
+							if _, loaded := seenTrees.LoadOrStore(task.sha, true); loaded {
+								return
+							}
+						}
+
+						var currentTree treeResponse
+						if task.isRoot {
+							currentTree = rootTree
+						} else {
+							fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+							defer cancel()
+							var fetchErr error
+							currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
+							if fetchErr != nil {
+								setFirstErr(fetchErr)
+								log.Printf("[INDEXER FATAL ERROR] Fetch failed for %s: %v", task.path, fetchErr)
+								return
+							}
+						}
+
+						var entriesToSave []struct {
+							Path string
+							Type string
+							Size int64
+							SHA  string
+						}
+
+						for _, node := range currentTree.Tree {
+							name := path.Base(normalizePath(node.Path))
+							if name == "" || name == "." {
+								continue
+							}
+
+							entriesToSave = append(entriesToSave, struct {
+								Path string
+								Type string
+								Size int64
+								SHA  string
+							}{Path: name, Type: node.Type, Size: node.Size, SHA: node.SHA})
+
+							fullPath := name
+							if task.path != "" {
+								fullPath = task.path + "/" + name
+							}
+
+							if node.Type == "blob" {
+								c := atomic.AddInt64(&count, 1)
+								if c%1000 == 0 {
+									log.Printf("[INDEXER] Progress: %d files discovered...", c)
+								}
+							} else if node.Type == "tree" && node.SHA != "" {
+								atomic.AddInt32(&activeTasks, 1)
+								tasks <- treeTask{path: fullPath, sha: node.SHA, isRoot: false}
+							}
+						}
+
+						if s.db != nil {
+							if err := s.db.SaveEntries(ctx, task.sha, entriesToSave); err != nil {
+								setFirstErr(err)
+								log.Printf("[INDEXER DB ERROR] Failed to save entries for %s: %v", task.path, err)
+							}
+						}
+					}()
+				}
+			}
+		}()
+	}
+
+	// Queue the root task
+	atomic.AddInt32(&activeTasks, 1)
+	tasks <- treeTask{path: "", sha: rootSHA, isRoot: true}
+
+	// Monitor completion
 	go func() {
-		wg.Wait()
+		for {
+			time.Sleep(100 * time.Millisecond)
+			if atomic.LoadInt32(&activeTasks) == 0 {
+				close(tasks)
+				return
+			}
+			if ctx.Err() != nil {
+				close(tasks)
+				return
+			}
+		}
 	}()
 
-	waitErr := g.Wait()
-	if waitErr != nil {
-		errMu.Lock()
-		final := firstErr
-		errMu.Unlock()
-		if final != nil {
-			return nil, final
-		}
-		return nil, waitErr
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	if s.db != nil {
@@ -741,7 +753,6 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			// Backoff before retry
 			select {
 			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 			case <-ctx.Done():
@@ -754,7 +765,6 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 			return nil
 		}
 		
-		// Don't retry on certain errors
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnsupportedSearchMode) {
 			return err
 		}
@@ -806,8 +816,6 @@ func (s *Forgejo) addAuthHeader(req *http.Request, ctx context.Context) {
 	if !ok {
 		return
 	}
-	// Use Bearer scheme for OAuth2 access tokens (Forgejo also accepts "token"
-	// for PATs, but Bearer is correct for OAuth2 and works for both).
 	req.Header.Set("Authorization", "Bearer "+token)
 }
 
