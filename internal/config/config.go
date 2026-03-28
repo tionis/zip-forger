@@ -14,24 +14,24 @@ import (
 const FileName = ".zip-forger.yaml"
 
 type RepoConfig struct {
-	Version int      `yaml:"version"`
-	Options Options  `yaml:"options"`
-	Presets []Preset `yaml:"presets"`
+	Version int      `yaml:"version" json:"version"`
+	Options Options  `yaml:"options" json:"options"`
+	Presets []Preset `yaml:"presets" json:"presets"`
 }
 
 type Options struct {
-	AllowAdhocFilters   *bool `yaml:"allowAdhocFilters"`
-	MaxFilesPerDownload int   `yaml:"maxFilesPerDownload"`
-	MaxBytesPerDownload int64 `yaml:"maxBytesPerDownload"`
+	AllowAdhocFilters   *bool `yaml:"allowAdhocFilters" json:"allowAdhocFilters"`
+	MaxFilesPerDownload int   `yaml:"maxFilesPerDownload" json:"maxFilesPerDownload"`
+	MaxBytesPerDownload int64 `yaml:"maxBytesPerDownload" json:"maxBytesPerDownload"`
 }
 
 type Preset struct {
-	ID           string   `yaml:"id"`
-	Description  string   `yaml:"description"`
-	IncludeGlobs []string `yaml:"includeGlobs"`
-	ExcludeGlobs []string `yaml:"excludeGlobs"`
-	Extensions   []string `yaml:"extensions"`
-	PathPrefixes []string `yaml:"pathPrefixes"`
+	ID           string   `yaml:"id" json:"id"`
+	Description  string   `yaml:"description" json:"description"`
+	IncludeGlobs []string `yaml:"includeGlobs" json:"includeGlobs"`
+	ExcludeGlobs []string `yaml:"excludeGlobs" json:"excludeGlobs"`
+	Extensions   []string `yaml:"extensions" json:"extensions"`
+	PathPrefixes []string `yaml:"pathPrefixes" json:"pathPrefixes"`
 }
 
 func Default() RepoConfig {

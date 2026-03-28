@@ -611,7 +611,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (res.status === 204) return {};
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(data.message || "Request failed: " + res.status);
+          const msg = (data.error && data.error.message) || data.message || "Request failed: " + res.status;
+          throw new Error(msg);
         }
         return data;
       }
@@ -706,6 +707,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             '</div>' +
             '<label>ID <input value="' + (p.id || "") + '" oninput="updatePreset(' + i + ', \'id\', this.value)"></label>' +
             '<label>Description <input value="' + (p.description || "") + '" oninput="updatePreset(' + i + ', \'description\', this.value)"></label>' +
+            '<label>Include Globs <input value="' + (p.includeGlobs || []).join(", ") + '" oninput="updatePreset(' + i + ', \'includeGlobs\', this.value)"></label>' +
+            '<label>Exclude Globs <input value="' + (p.excludeGlobs || []).join(", ") + '" oninput="updatePreset(' + i + ', \'excludeGlobs\', this.value)"></label>' +
             '<label>Extensions <input value="' + (p.extensions || []).join(", ") + '" oninput="updatePreset(' + i + ', \'extensions\', this.value)"></label>' +
             '<label>Prefixes <input value="' + (p.pathPrefixes || []).join(", ") + '" oninput="updatePreset(' + i + ', \'pathPrefixes\', this.value)"></label>';
           nodes.presetList.appendChild(item);
@@ -713,7 +716,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       window.updatePreset = (idx, key, val) => {
-        if (key === 'extensions' || key === 'pathPrefixes') {
+        if (key === 'extensions' || key === 'pathPrefixes' || key === 'includeGlobs' || key === 'excludeGlobs') {
           state.config.presets[idx][key] = val.split(",").map(s => s.trim()).filter(Boolean);
         } else {
           state.config.presets[idx][key] = val;
@@ -732,7 +735,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           state.config = { version: 1, options: { allowAdhocFilters: true }, presets: [] };
         }
         state.config.presets = state.config.presets || [];
-        state.config.presets.push({ id: "", description: "", extensions: [], pathPrefixes: [] });
+        state.config.presets.push({ id: "", description: "", includeGlobs: [], excludeGlobs: [], extensions: [], pathPrefixes: [] });
         renderPresetEditor();
       }
 

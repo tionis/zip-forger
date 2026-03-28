@@ -609,12 +609,11 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	
 	var (
 		count       int64
-		activeTasks int32
+		firstErr    error
+		errMu       sync.Once
+		seenTrees   sync.Map 
 		
-		firstErr error
-		errMu    sync.Once
-		
-		seenTrees sync.Map // Map[string]bool
+		taskWG      sync.WaitGroup
 	)
 
 	setFirstErr := func(err error) {
@@ -642,7 +641,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 					}
 
 					func() {
-						defer atomic.AddInt32(&activeTasks, -1)
+						defer taskWG.Done()
 						
 						// Avoid re-indexing the same directory SHA
 						if !task.isRoot {
@@ -698,7 +697,8 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 										s.onProgress(owner, repo, commit, c)
 									}
 								}
-							} else if node.Type == "tree" && node.SHA != "" {								atomic.AddInt32(&activeTasks, 1)
+							} else if node.Type == "tree" && node.SHA != "" {
+								taskWG.Add(1)
 								tasks <- treeTask{path: fullPath, sha: node.SHA, isRoot: false}
 							}
 						}
@@ -716,22 +716,13 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	}
 
 	// Queue the root task
-	atomic.AddInt32(&activeTasks, 1)
+	taskWG.Add(1)
 	tasks <- treeTask{path: "", sha: rootSHA, isRoot: true}
 
-	// Monitor completion
+	// Wait for all tasks to be finished and close channel
 	go func() {
-		for {
-			time.Sleep(100 * time.Millisecond)
-			if atomic.LoadInt32(&activeTasks) == 0 {
-				close(tasks)
-				return
-			}
-			if ctx.Err() != nil {
-				close(tasks)
-				return
-			}
-		}
+		taskWG.Wait()
+		close(tasks)
 	}()
 
 	wg.Wait()
