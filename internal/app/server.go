@@ -11,9 +11,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -31,6 +34,8 @@ type Dependencies struct {
 	ManifestCache *cache.ManifestCache
 	Auth          *auth.Manager
 	Progress      *ProgressManager
+	ArtifactStore *ArtifactStore
+	PrivateURL    *PrivateDownloadCodec
 	Logger        *log.Logger
 }
 
@@ -39,6 +44,8 @@ type Server struct {
 	manifestCache *cache.ManifestCache
 	auth          *auth.Manager
 	progress      *ProgressManager
+	artifactStore *ArtifactStore
+	privateURL    *PrivateDownloadCodec
 	logger        *log.Logger
 }
 
@@ -57,6 +64,8 @@ type previewResponse struct {
 	FromCache        bool            `json:"fromCache"`
 	Entries          []string        `json:"entries,omitempty"`
 	EntriesTruncated bool            `json:"entriesTruncated"`
+	DownloadURL      string          `json:"downloadUrl,omitempty"`
+	DownloadURLUntil *time.Time      `json:"downloadUrlUntil,omitempty"`
 }
 
 type configResponse struct {
@@ -75,6 +84,14 @@ type selection struct {
 	Criteria  filter.Criteria
 	Manifest  cache.Manifest
 	FromCache bool
+}
+
+type downloadRequest struct {
+	Owner  string
+	Repo   string
+	Ref    string
+	Preset string
+	Adhoc  filter.Criteria
 }
 
 type apiError struct {
@@ -105,11 +122,18 @@ func NewServer(deps Dependencies) *Server {
 		manifestCache = cache.NewManifestCache(0, 1)
 	}
 
+	artifactStore := deps.ArtifactStore
+	if artifactStore == nil {
+		artifactStore = NewArtifactStore(filepath.Join(os.TempDir(), "zip-forger-downloads"))
+	}
+
 	return &Server{
 		source:        deps.Source,
 		manifestCache: manifestCache,
 		auth:          deps.Auth,
 		progress:      deps.Progress,
+		artifactStore: artifactStore,
+		privateURL:    deps.PrivateURL,
 		logger:        logger,
 	}
 }
@@ -126,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 
 	previewHandler := http.Handler(http.HandlerFunc(s.handlePreview))
 	downloadHandler := http.Handler(http.HandlerFunc(s.handleDownload))
+	progressHandler := http.Handler(http.HandlerFunc(s.handleIndexProgress))
 	configGetHandler := http.Handler(http.HandlerFunc(s.handleConfig))
 	configPutHandler := http.Handler(http.HandlerFunc(s.handleUpdateConfig))
 	searchReposHandler := http.Handler(http.HandlerFunc(s.handleSearchRepos))
@@ -133,6 +158,7 @@ func (s *Server) Handler() http.Handler {
 	if s.auth != nil {
 		previewHandler = s.auth.Middleware(previewHandler)
 		downloadHandler = s.auth.Middleware(downloadHandler)
+		progressHandler = s.auth.Middleware(progressHandler)
 		configGetHandler = s.auth.Middleware(configGetHandler)
 		configPutHandler = s.auth.Middleware(configPutHandler)
 		searchReposHandler = s.auth.Middleware(searchReposHandler)
@@ -140,16 +166,11 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	mux.Handle("GET /api/repos/search", searchReposHandler)
-	mux.HandleFunc("GET /api/repos/{owner}/{repo}/index-progress", func(w http.ResponseWriter, r *http.Request) {
-		if s.progress == nil {
-			http.Error(w, "progress reporting disabled", http.StatusNotImplemented)
-			return
-		}
-		s.progress.HandleSSE(w, r)
-	})
+	mux.Handle("GET /api/repos/{owner}/{repo}/index-progress", progressHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/branches", branchesHandler)
 	mux.Handle("POST /api/repos/{owner}/{repo}/preview", previewHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/download.zip", downloadHandler)
+	mux.HandleFunc("GET /api/downloads/private.zip", s.handlePrivateDownload)
 	mux.Handle("GET /api/repos/{owner}/{repo}/config", configGetHandler)
 	mux.Handle("PUT /api/repos/{owner}/{repo}/config", configPutHandler)
 	return mux
@@ -171,6 +192,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
+func (s *Server) handleIndexProgress(w http.ResponseWriter, r *http.Request) {
+	if s.progress == nil {
+		http.Error(w, "progress reporting disabled", http.StatusNotImplemented)
+		return
+	}
+
+	owner := strings.TrimSpace(r.PathValue("owner"))
+	repo := strings.TrimSpace(r.PathValue("repo"))
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	if ref == "" {
+		ref = strings.TrimSpace(r.URL.Query().Get("commit"))
+	}
+
+	aliases := []string{ref}
+	if ref != "" && s.source != nil {
+		if commit, err := s.source.ResolveRef(r.Context(), owner, repo, ref); err == nil && strings.TrimSpace(commit) != "" {
+			aliases = append(aliases, commit)
+		}
+	}
+
+	s.progress.HandleSSE(w, r, owner, repo, aliases...)
+}
+
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	owner := r.PathValue("owner")
 	repo := r.PathValue("repo")
@@ -188,6 +232,13 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, truncated := manifestEntryPaths(sel.Manifest.Entries, previewEntriesLimit)
+	downloadURL, downloadURLUntil := s.buildDownloadURL(r, downloadRequest{
+		Owner:  owner,
+		Repo:   repo,
+		Ref:    sel.Commit,
+		Preset: req.Preset,
+		Adhoc:  req.Adhoc,
+	})
 	writeJSON(w, http.StatusOK, previewResponse{
 		Commit:           sel.Commit,
 		Preset:           req.Preset,
@@ -197,6 +248,8 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		FromCache:        sel.FromCache,
 		Entries:          entries,
 		EntriesTruncated: truncated,
+		DownloadURL:      downloadURL,
+		DownloadURLUntil: downloadURLUntil,
 	})
 }
 
@@ -333,57 +386,68 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	owner := r.PathValue("owner")
 	repo := r.PathValue("repo")
-	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-	preset := strings.TrimSpace(r.URL.Query().Get("preset"))
-
-	adhoc := filter.Criteria{
-		IncludeGlobs: collectQueryValues(r.URL.Query(), "include"),
-		ExcludeGlobs: collectQueryValues(r.URL.Query(), "exclude"),
-		Extensions:   collectQueryValues(r.URL.Query(), "ext"),
-		PathPrefixes: collectQueryValues(r.URL.Query(), "prefix"),
+	req := downloadRequest{
+		Owner:  owner,
+		Repo:   repo,
+		Ref:    strings.TrimSpace(r.URL.Query().Get("ref")),
+		Preset: strings.TrimSpace(r.URL.Query().Get("preset")),
+		Adhoc: filter.Criteria{
+			IncludeGlobs: collectQueryValues(r.URL.Query(), "include"),
+			ExcludeGlobs: collectQueryValues(r.URL.Query(), "exclude"),
+			Extensions:   collectQueryValues(r.URL.Query(), "ext"),
+			PathPrefixes: collectQueryValues(r.URL.Query(), "prefix"),
+		},
 	}
 
-	sel, err := s.buildSelection(r.Context(), owner, repo, ref, preset, adhoc)
+	sel, err := s.buildSelection(r.Context(), owner, repo, req.Ref, req.Preset, req.Adhoc)
 	if err != nil {
 		s.writeAPIError(w, err)
 		return
 	}
 
-	// True byte-range resume is unavailable without persisted ZIP bytes.
-	if r.Header.Get("Range") != "" {
+	token, _ := source.AccessTokenFromContext(r.Context())
+	if err := s.serveSelectionArchive(w, r, req.Owner, req.Repo, sel, token); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		s.writeAPIError(w, err)
+		return
+	}
+}
+
+func (s *Server) handlePrivateDownload(w http.ResponseWriter, r *http.Request) {
+	if s.privateURL == nil {
 		s.writeAPIError(w, &apiError{
-			status:  http.StatusConflict,
-			code:    "resume_not_available",
-			message: "best-effort resume is not enabled yet for this instance",
+			status:  http.StatusNotFound,
+			code:    "private_downloads_disabled",
+			message: "private download URLs are not enabled for this instance",
 		})
 		return
 	}
 
-	archiveName := sanitizeFilename(fmt.Sprintf("%s-%s.zip", repo, shortRef(sel.Commit)))
-	w.Header().Set("X-Zip-Total-Size", strconv.FormatInt(sel.Manifest.TotalBytes, 10))
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Zip-Forger-Commit", sel.Commit)
-	w.Header().Set("X-Zip-Forger-Resume", "best-effort")
-	w.WriteHeader(http.StatusOK)
+	payload, err := s.privateURL.Decode(r.URL.Query().Get(privateDownloadTokenParam))
+	if err != nil {
+		s.writeAPIError(w, &apiError{
+			status:  http.StatusUnauthorized,
+			code:    "invalid_private_download_token",
+			message: "private download URL is invalid or expired",
+			err:     err,
+		})
+		return
+	}
 
-	token, _ := source.AccessTokenFromContext(r.Context())
-	streamCtx := source.WithAccessToken(context.Background(), token)
+	sel, err := s.buildSelectionForCommit(r.Context(), payload.Owner, payload.Repo, payload.Commit, payload.Preset, payload.Adhoc)
+	if err != nil {
+		s.writeAPIError(w, err)
+		return
+	}
 
-	streamErr := zipstream.Stream(r.Context(), w, sel.Manifest.Entries, func(_ context.Context, filePath string) (io.ReadCloser, error) {
-		return s.source.OpenFile(streamCtx, owner, repo, sel.Commit, filePath)
-	}, &zipstream.Options{
-		OnFileError: func(path string, err error) error {
-			if errors.Is(err, source.ErrNotFound) {
-				s.logger.Printf("stream skip missing file owner=%s repo=%s commit=%s path=%s", owner, repo, sel.Commit, path)
-				return nil
-			}
-			return err
-		},
-	})
-	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
-		s.logger.Printf("stream failed owner=%s repo=%s commit=%s err=%v", owner, repo, sel.Commit, streamErr)
+	if err := s.serveSelectionArchive(w, r, payload.Owner, payload.Repo, sel, payload.AccessToken); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		s.writeAPIError(w, err)
+		return
 	}
 }
 
@@ -392,7 +456,10 @@ func (s *Server) buildSelection(ctx context.Context, owner, repo, ref, preset st
 	if err != nil {
 		return selection{}, err
 	}
+	return s.buildSelectionForCommit(ctx, owner, repo, commit, preset, adhoc)
+}
 
+func (s *Server) buildSelectionForCommit(ctx context.Context, owner, repo, commit, preset string, adhoc filter.Criteria) (selection, error) {
 	repoConfig, err := s.loadRepoConfig(ctx, owner, repo, commit)
 	if err != nil {
 		return selection{}, err
@@ -466,6 +533,20 @@ func (s *Server) buildSelection(ctx context.Context, owner, repo, ref, preset st
 		return selected[i].Path < selected[j].Path
 	})
 
+	if resolver, ok := s.source.(source.EntrySizeResolver); ok && len(selected) > 0 {
+		resolved, resolveErr := resolver.ResolveEntrySizes(ctx, owner, repo, commit, selected)
+		if resolveErr != nil {
+			s.logger.Printf("size resolution warning owner=%s repo=%s commit=%s err=%v", owner, repo, commit, resolveErr)
+		} else {
+			selected = resolved
+		}
+	}
+
+	totalBytes = 0
+	for _, entry := range selected {
+		totalBytes += entry.Size
+	}
+
 	manifest := cache.Manifest{
 		Entries:    selected,
 		TotalBytes: totalBytes,
@@ -481,6 +562,127 @@ func (s *Server) buildSelection(ctx context.Context, owner, repo, ref, preset st
 		Manifest:  manifest,
 		FromCache: false,
 	}, nil
+}
+
+func (s *Server) serveSelectionArchive(w http.ResponseWriter, r *http.Request, owner, repo string, sel selection, accessToken string) error {
+	artifact, err := s.prepareArtifact(r.Context(), owner, repo, sel, accessToken)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Open(artifact.Path)
+	if err != nil {
+		return &apiError{
+			status:  http.StatusInternalServerError,
+			code:    "archive_open_failed",
+			message: "unable to open generated archive",
+			err:     err,
+		}
+	}
+	defer file.Close()
+
+	archiveName := sanitizeFilename(fmt.Sprintf("%s-%s.zip", repo, shortRef(sel.Commit)))
+	w.Header().Set("X-Zip-Total-Size", strconv.FormatInt(sel.Manifest.TotalBytes, 10))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Zip-Forger-Commit", sel.Commit)
+	w.Header().Set("X-Zip-Forger-Resume", "bytes")
+	w.Header().Set("ETag", `"`+artifact.Key+`"`)
+	http.ServeContent(w, r, archiveName, artifact.ModTime, file)
+	return nil
+}
+
+func (s *Server) prepareArtifact(ctx context.Context, owner, repo string, sel selection, accessToken string) (Artifact, error) {
+	if s.artifactStore == nil {
+		return Artifact{}, &apiError{
+			status:  http.StatusInternalServerError,
+			code:    "archive_store_unavailable",
+			message: "download archive store is unavailable",
+		}
+	}
+
+	artifact, err := s.artifactStore.Ensure(ctx, downloadArtifactKey(owner, repo, sel, accessToken), func(ctx context.Context, w io.Writer) error {
+		return zipstream.Stream(ctx, w, sel.Manifest.Entries, func(ctx context.Context, filePath string) (io.ReadCloser, error) {
+			return s.source.OpenFile(source.WithAccessToken(ctx, accessToken), owner, repo, sel.Commit, filePath)
+		}, &zipstream.Options{
+			OnFileError: func(path string, err error) error {
+				if errors.Is(err, source.ErrNotFound) {
+					s.logger.Printf("stream skip missing file owner=%s repo=%s commit=%s path=%s", owner, repo, sel.Commit, path)
+					return nil
+				}
+				return err
+			},
+		})
+	})
+	if err == nil {
+		return artifact, nil
+	}
+	if errors.Is(err, source.ErrUnauthorized) {
+		return Artifact{}, &apiError{
+			status:  http.StatusUnauthorized,
+			code:    "source_unauthorized",
+			message: "not authorized to read repository files",
+			err:     err,
+		}
+	}
+	if errors.Is(err, source.ErrNotFound) {
+		return Artifact{}, &apiError{
+			status:  http.StatusNotFound,
+			code:    "not_found",
+			message: "requested resource was not found",
+			err:     err,
+		}
+	}
+	return Artifact{}, &apiError{
+		status:  http.StatusBadGateway,
+		code:    "archive_build_failed",
+		message: "unable to create download archive",
+		err:     err,
+	}
+}
+
+func (s *Server) buildDownloadURL(r *http.Request, req downloadRequest) (string, *time.Time) {
+	if r == nil {
+		return "", nil
+	}
+
+	token, _ := source.AccessTokenFromContext(r.Context())
+	if s.privateURL != nil && token != "" {
+		privateToken, expiresAt, err := s.privateURL.Encode(req.Owner, req.Repo, req.Ref, req.Preset, token, req.Adhoc)
+		if err == nil {
+			values := url.Values{}
+			values.Set(privateDownloadTokenParam, privateToken)
+			expiresAt := expiresAt
+			return requestBaseURL(r) + "/api/downloads/private.zip?" + values.Encode(), &expiresAt
+		}
+	}
+
+	values := url.Values{}
+	if req.Ref != "" {
+		values.Set("ref", req.Ref)
+	}
+	if req.Preset != "" {
+		values.Set("preset", req.Preset)
+	}
+	for _, value := range req.Adhoc.IncludeGlobs {
+		values.Add("include", value)
+	}
+	for _, value := range req.Adhoc.ExcludeGlobs {
+		values.Add("exclude", value)
+	}
+	for _, value := range req.Adhoc.Extensions {
+		values.Add("ext", value)
+	}
+	for _, value := range req.Adhoc.PathPrefixes {
+		values.Add("prefix", value)
+	}
+
+	path := fmt.Sprintf("/api/repos/%s/%s/download.zip", url.PathEscape(req.Owner), url.PathEscape(req.Repo))
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return requestBaseURL(r) + path, nil
 }
 
 func (s *Server) resolveCommit(ctx context.Context, owner, repo, ref string) (string, error) {
@@ -617,6 +819,13 @@ func selectionCacheKey(owner, repo, commit string, criteria filter.Criteria) str
 	return owner + "/" + repo + "@" + commit + ":" + hex.EncodeToString(sum[:])
 }
 
+func downloadArtifactKey(owner, repo string, sel selection, accessToken string) string {
+	selectionKey := selectionCacheKey(owner, repo, sel.Commit, sel.Criteria)
+	tokenHash := sha256.Sum256([]byte(accessToken))
+	sum := sha256.Sum256([]byte(selectionKey + ":" + hex.EncodeToString(tokenHash[:])))
+	return hex.EncodeToString(sum[:])
+}
+
 func decodePreviewRequest(r *http.Request) (previewRequest, error) {
 	var req previewRequest
 
@@ -749,4 +958,23 @@ func manifestEntryPaths(entries []source.Entry, limit int) ([]string, bool) {
 		out = append(out, entry.Path)
 	}
 	return out, true
+}
+
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	scheme := "http"
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	return scheme + "://" + host
 }

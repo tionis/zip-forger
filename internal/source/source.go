@@ -27,3 +27,7 @@ type RepositorySource interface {
 	GetFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error)
 	UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message, sha string) error
 }
+
+type EntrySizeResolver interface {
+	ResolveEntrySizes(ctx context.Context, owner, repo, commit string, entries []Entry) ([]Entry, error)
+}

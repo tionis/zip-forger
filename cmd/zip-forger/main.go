@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -56,6 +58,8 @@ func main() {
 		ManifestCache: cache.NewManifestCache(5*time.Minute, 1024),
 		Auth:          authManager,
 		Progress:      progressManager,
+		ArtifactStore: app.NewArtifactStore(filepath.Join(cacheDir, "downloads")),
+		PrivateURL:    buildPrivateURLCodec(logger),
 		Logger:        logger,
 	})
 
@@ -163,6 +167,38 @@ func buildAuthManager(mode string, required bool, forgejoBaseURL string, logger 
 	}
 }
 
+func buildPrivateURLCodec(logger *log.Logger) *app.PrivateDownloadCodec {
+	secret := strings.TrimSpace(getenv("ZIP_FORGER_DOWNLOAD_URL_SECRET", ""))
+	if secret == "" {
+		secret = strings.TrimSpace(getenv("ZIP_FORGER_SESSION_SECRET", ""))
+	}
+	if secret == "" {
+		generated, err := randomStartupSecret()
+		if err != nil {
+			logger.Printf("private download URLs disabled: unable to generate startup secret: %v", err)
+			return nil
+		}
+		secret = generated
+		logger.Printf("private download URLs use an ephemeral startup secret; generated URLs stop working after restart")
+	}
+
+	ttl := 24 * time.Hour
+	if rawTTL := strings.TrimSpace(getenv("ZIP_FORGER_DOWNLOAD_URL_TTL", "")); rawTTL != "" {
+		parsedTTL, err := time.ParseDuration(rawTTL)
+		if err != nil {
+			logger.Fatalf("invalid ZIP_FORGER_DOWNLOAD_URL_TTL value %q: %v", rawTTL, err)
+		}
+		ttl = parsedTTL
+	}
+
+	codec, err := app.NewPrivateDownloadCodec(secret, ttl)
+	if err != nil {
+		logger.Printf("private download URLs disabled: %v", err)
+		return nil
+	}
+	return codec
+}
+
 func parseCSV(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -201,4 +237,12 @@ func parseBool(value string) *bool {
 
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+func randomStartupSecret() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }

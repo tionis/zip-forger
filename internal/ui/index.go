@@ -405,7 +405,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           </section>
 
           <section class="card">
-            <div class="card-title">Share</div>
+            <div class="card-title">Download URL</div>
             <input id="shareUrl" readonly />
             <button class="ghost" id="copyUrlBtn" type="button">Copy URL</button>
           </section>
@@ -455,7 +455,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <script>
     (function () {
       const THEME_KEY = "zip_forger.theme_mode";
-      const state = { busy: false, preview: null, config: null };
+      const state = { busy: false, preview: null, previewKey: "", config: null };
       const nodes = {
         repo: document.getElementById("repo"),
         repoOptions: document.getElementById("repoOptions"),
@@ -506,12 +506,15 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.downloadBtn.addEventListener("click", downloadZip);
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.logoutBtn.addEventListener("click", logout);
-        nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
+        nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); invalidatePreview(); updateShareURL(); });
         nodes.copyUrlBtn.addEventListener("click", copyShareURL);
         
         const updateEvents = ["input", "change"];
         [nodes.ref, nodes.preset, nodes.includeGlobs, nodes.excludeGlobs, nodes.extensions, nodes.prefixes].forEach(node => {
-          updateEvents.forEach(ev => node.addEventListener(node === nodes.includeGlobs || node === nodes.excludeGlobs ? "input" : ev, updateShareURL));
+          updateEvents.forEach(ev => node.addEventListener(node === nodes.includeGlobs || node === nodes.excludeGlobs ? "input" : ev, () => {
+            invalidatePreview();
+            updateShareURL();
+          }));
         });
 
         nodes.repo.addEventListener("input", debounce(() => {
@@ -523,12 +526,17 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         }, 300));
 
         nodes.repo.addEventListener("change", () => run(async () => { 
+          invalidatePreview();
           await onRepoChanged(); 
           if (nodes.repo.value.includes("/")) {
             await loadConfig(); 
           }
         }));
-        nodes.ref.addEventListener("change", () => run(async () => { await onRepoChanged(); await loadConfig(); }));
+        nodes.ref.addEventListener("change", () => run(async () => {
+          invalidatePreview();
+          await onRepoChanged();
+          await loadConfig();
+        }));
 
         nodes.themeButtons.forEach(btn => {
           btn.addEventListener("click", () => setThemeMode(btn.dataset.theme));
@@ -574,30 +582,63 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.message.className = "message" + (level ? " " + level : "");
       }
 
-      function updateShareURL() {
+      function currentSelectionKey() {
+        return JSON.stringify({
+          repo: nodes.repo.value.trim(),
+          ref: nodes.ref.value.trim(),
+          preset: nodes.preset.value.trim(),
+          adhoc: !!nodes.useAdhoc.checked,
+          include: nodes.includeGlobs.value,
+          exclude: nodes.excludeGlobs.value,
+          ext: nodes.extensions.value,
+          prefix: nodes.prefixes.value
+        });
+      }
+
+      function invalidatePreview() {
+        state.preview = null;
+        state.previewKey = "";
+        nodes.downloadBtn.disabled = true;
+        nodes.commitValue.textContent = "—";
+        nodes.filesValue.textContent = "0";
+        nodes.bytesValue.textContent = "0 B";
+        nodes.treeView.textContent = "";
+        updateRepoSummary();
+      }
+
+      function buildCurrentDownloadURL() {
         const full = nodes.repo.value.trim();
         const parts = full.split("/");
-        if (parts.length < 2) {
+        if (parts.length < 2) return "";
+
+        const query = new URLSearchParams();
+        if (nodes.ref.value) query.set("ref", nodes.ref.value);
+        if (nodes.preset.value) query.set("preset", nodes.preset.value);
+        if (nodes.useAdhoc.checked) {
+          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("include", g));
+          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("exclude", g));
+          nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean).forEach(e => query.append("ext", e));
+          nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean).forEach(p => query.append("prefix", p));
+        }
+
+        const base = "/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/download.zip";
+        const qs = query.toString();
+        return qs ? base + "?" + qs : base;
+      }
+
+      function updateShareURL() {
+        if (!nodes.repo.value.includes("/")) {
           nodes.shareUrl.value = "";
           nodes.configureTabBtn.disabled = true;
           return;
         }
         nodes.configureTabBtn.disabled = false;
 
-        const url = new URL(window.location.origin + window.location.pathname);
-        url.searchParams.set("repo", full);
-        if (nodes.ref.value) url.searchParams.set("ref", nodes.ref.value);
-        if (nodes.preset.value) url.searchParams.set("preset", nodes.preset.value);
-        
-        if (nodes.useAdhoc.checked) {
-          url.searchParams.set("adhoc", "1");
-          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => url.searchParams.append("include", g));
-          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => url.searchParams.append("exclude", g));
-          if (nodes.extensions.value) url.searchParams.set("ext", nodes.extensions.value);
-          if (nodes.prefixes.value) url.searchParams.set("prefix", nodes.prefixes.value);
-        }
-        
-        nodes.shareUrl.value = url.toString();
+        const previewMatches = state.preview && state.previewKey === currentSelectionKey();
+        const url = previewMatches && state.preview.downloadUrl
+          ? state.preview.downloadUrl
+          : buildCurrentDownloadURL();
+        nodes.shareUrl.value = url ? new URL(url, window.location.origin).toString() : "";
         updateRepoSummary();
       }
 
@@ -655,9 +696,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       let progressSource = null;
-      function startProgressTracking(owner, repo, commit) {
+      function startProgressTracking(owner, repo, ref) {
         stopProgressTracking();
-        const url = "/api/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/index-progress?commit=" + encodeURIComponent(commit);
+        const url = "/api/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/index-progress?ref=" + encodeURIComponent(ref);
         progressSource = new EventSource(url);
         nodes.indexProgress.hidden = false;
         nodes.indexBar.style.width = "0%";
@@ -666,6 +707,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.indexCount.textContent = data.count.toLocaleString() + " files discovered";
           const val = (Math.log10(data.count + 1) / 6) * 100;
           nodes.indexBar.style.width = Math.min(val, 99) + "%";
+        };
+        progressSource.onerror = () => {
+          stopProgressTracking();
         };
       }
 
@@ -706,22 +750,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       async function downloadZip() {
-        const full = nodes.repo.value.trim();
-        const parts = full.split("/");
-        if (parts.length < 2) return;
-
-        const query = new URLSearchParams();
-        if (nodes.ref.value) query.set("ref", nodes.ref.value);
-        if (nodes.preset.value) query.set("preset", nodes.preset.value);
-        
-        if (nodes.useAdhoc.checked) {
-          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("include", g));
-          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("exclude", g));
-          nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean).forEach(e => query.append("ext", e));
-          nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean).forEach(p => query.append("prefix", p));
-        }
-
-        const url = "/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/download.zip?" + query.toString();
+        const url = buildCurrentDownloadURL();
+        if (!url) return;
         // Crucial: Use a temporary link to ensure browsers handle the download 
         // while preserving the user session (cookies).
         const a = document.createElement("a");
@@ -754,6 +784,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             })
           });
           state.preview = payload;
+          state.previewKey = currentSelectionKey();
           nodes.commitValue.textContent = payload.commit.substring(0,8);
           nodes.filesValue.textContent = payload.selectedFiles.toLocaleString();
           nodes.bytesValue.textContent = formatBytes(payload.totalBytes);

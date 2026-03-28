@@ -111,6 +111,12 @@ func (s *LocalFS) ListFiles(_ context.Context, owner, repo, commit string, _ fil
 	return entries, nil
 }
 
+func (s *LocalFS) ResolveEntrySizes(_ context.Context, owner, repo, commit string, entries []Entry) ([]Entry, error) {
+	out := make([]Entry, len(entries))
+	copy(out, entries)
+	return out, nil
+}
+
 func (s *LocalFS) OpenFile(_ context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
 	base := filepath.Join(s.root, owner, repo, commit)
 	fullPath, err := safeJoin(base, filePath)

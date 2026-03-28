@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -40,12 +41,9 @@ func (m *ProgressManager) Notify(owner, repo, commit string, count int64) {
 	}
 }
 
-func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
-	owner := r.PathValue("owner")
-	repo := r.PathValue("repo")
-	commit := r.URL.Query().Get("commit")
-
-	if owner == "" || repo == "" || commit == "" {
+func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request, owner, repo string, refs ...string) {
+	keys := m.keys(owner, repo, refs...)
+	if owner == "" || repo == "" || len(keys) == 0 {
 		http.Error(w, "missing parameters", http.StatusBadRequest)
 		return
 	}
@@ -56,25 +54,31 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := make(chan int64, 10)
-	k := m.key(owner, repo, commit)
 
 	m.mu.Lock()
-	initialCount := m.lastCount[k]
-	m.listeners[k] = append(m.listeners[k], ch)
+	initialCount := int64(0)
+	for _, key := range keys {
+		if count := m.lastCount[key]; count > initialCount {
+			initialCount = count
+		}
+		m.listeners[key] = append(m.listeners[key], ch)
+	}
 	m.mu.Unlock()
 
 	defer func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		channels := m.listeners[k]
-		for i, c := range channels {
-			if c == ch {
-				m.listeners[k] = append(channels[:i], channels[i+1:]...)
-				break
+		for _, key := range keys {
+			channels := m.listeners[key]
+			for i, c := range channels {
+				if c == ch {
+					m.listeners[key] = append(channels[:i], channels[i+1:]...)
+					break
+				}
 			}
-		}
-		if len(m.listeners[k]) == 0 {
-			delete(m.listeners, k)
+			if len(m.listeners[key]) == 0 {
+				delete(m.listeners, key)
+			}
 		}
 	}()
 
@@ -97,4 +101,22 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (m *ProgressManager) keys(owner, repo string, refs ...string) []string {
+	seen := make(map[string]struct{}, len(refs))
+	keys := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		key := m.key(owner, repo, ref)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
 }

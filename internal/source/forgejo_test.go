@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"zip-forger/internal/filter"
 )
 
 type mockTreeDB struct {
+	mu      sync.RWMutex
 	indexed map[string]bool
 	entries map[string][]struct {
 		Path string
@@ -36,10 +38,14 @@ func newMockTreeDB() *mockTreeDB {
 }
 
 func (m *mockTreeDB) IsIndexed(_ context.Context, sha string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.indexed[sha], nil
 }
 
 func (m *mockTreeDB) MarkIndexed(_ context.Context, sha string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.indexed[sha] = true
 	return nil
 }
@@ -50,6 +56,8 @@ func (m *mockTreeDB) SaveEntries(_ context.Context, parentSHA string, entries []
 	Size int64
 	SHA  string
 }) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.entries[parentSHA] = entries
 	return nil
 }
@@ -62,7 +70,9 @@ func (m *mockTreeDB) Search(_ context.Context, rootSHA string, criteria filter.C
 	var out []Entry
 	var walk func(sha string, prefix string)
 	walk = func(sha string, prefix string) {
+		m.mu.RLock()
 		entries := m.entries[sha]
+		m.mu.RUnlock()
 		for _, e := range entries {
 			fullPath := e.Path
 			if prefix != "" {
@@ -105,10 +115,17 @@ func (m *mockTreeDB) Search(_ context.Context, rootSHA string, criteria filter.C
 
 func TestForgejoResolveListAndOpen(t *testing.T) {
 	db := newMockTreeDB()
+	progressCount := int64(0)
 
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
 		TreeDB:  db,
+		OnProgress: func(owner, repo, commit string, count int64) {
+			if owner != "acme" || repo != "rules" || commit != "commit-sha" {
+				t.Fatalf("unexpected progress notification owner=%s repo=%s commit=%s count=%d", owner, repo, commit, count)
+			}
+			progressCount = count
+		},
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				if r.Header.Get("Authorization") != "Bearer tok-123" {
@@ -186,6 +203,9 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 	}
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 blob entries, got %d", len(entries))
+	}
+	if progressCount != 3 {
+		t.Fatalf("expected final progress count 3, got %d", progressCount)
 	}
 	if entries[0].Path != "README.md" && entries[0].Path != "rules/core/docs/manual.pdf" {
 		t.Fatalf("unexpected first entry: %#v", entries[0])
@@ -499,6 +519,54 @@ size 12345
 	}
 	if strings.TrimSpace(string(body)) != "real-binary-content" {
 		t.Fatalf("unexpected LFS fallback content: %q", string(body))
+	}
+}
+
+func TestForgejoResolveEntrySizesUsesLFSPointerSize(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/docs/manual.pdf" && r.URL.Query().Get("ref") == "commit-sha":
+					return response(http.StatusOK, strings.Join([]string{
+						"version https://git-lfs.github.com/spec/v1",
+						"oid sha256:deadbeef",
+						"size 424242",
+						"",
+					}, "\n")), nil
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/docs/readme.txt" && r.URL.Query().Get("ref") == "commit-sha":
+					return response(http.StatusOK, "plain text"), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	entries, err := client.ResolveEntrySizes(ctx, "acme", "rules", "commit-sha", []Entry{
+		{Path: "docs/manual.pdf", Size: 128},
+		{Path: "docs/readme.txt", Size: 10},
+		{Path: "docs/already-large.bin", Size: 9000},
+	})
+	if err != nil {
+		t.Fatalf("ResolveEntrySizes failed: %v", err)
+	}
+	if entries[0].Size != 424242 {
+		t.Fatalf("expected LFS pointer size 424242, got %d", entries[0].Size)
+	}
+	if entries[1].Size != 10 {
+		t.Fatalf("expected regular file size to remain 10, got %d", entries[1].Size)
+	}
+	if entries[2].Size != 9000 {
+		t.Fatalf("expected large file size to remain unchanged, got %d", entries[2].Size)
 	}
 }
 

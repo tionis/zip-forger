@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"zip-forger/internal/filter"
 )
 
@@ -112,9 +114,64 @@ func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, cri
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+	reader, body, err := s.openRawReader(ctx, owner, repo, commit, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	pointer, isPointer := parseLFSPointer(reader)
+	if !isPointer {
+		return struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: reader,
+			Closer: body,
+		}, nil
+	}
+
+	body.Close()
+	return s.downloadLFSObject(ctx, owner, repo, pointer.OID, pointer.Size)
+}
+
+func (s *Forgejo) ResolveEntrySizes(ctx context.Context, owner, repo, commit string, entries []Entry) ([]Entry, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	out := make([]Entry, len(entries))
+	copy(out, entries)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	for idx := range out {
+		if out[idx].Size > 8<<10 {
+			continue
+		}
+
+		idx := idx
+		group.Go(func() error {
+			pointer, isPointer, err := s.detectLFSPointer(groupCtx, owner, repo, commit, out[idx].Path)
+			if err != nil {
+				return err
+			}
+			if isPointer && pointer.Size > 0 {
+				out[idx].Size = pointer.Size
+			}
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Forgejo) openRawReader(ctx context.Context, owner, repo, commit, filePath string) (*bufio.Reader, io.ReadCloser, error) {
 	relativePath := normalizePath(filePath)
 	if relativePath == "" {
-		return nil, errors.New("source: file path is required")
+		return nil, nil, errors.New("source: file path is required")
 	}
 
 	query := url.Values{}
@@ -129,42 +186,41 @@ func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath st
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s.addAuthHeader(req, ctx)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		resp.Body.Close()
-		return nil, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		resp.Body.Close()
-		return nil, ErrUnauthorized
+		return nil, nil, ErrUnauthorized
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		resp.Body.Close()
-		return nil, fmt.Errorf("source: forgejo raw read failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, nil, fmt.Errorf("source: forgejo raw read failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	reader := bufio.NewReaderSize(resp.Body, 8<<10)
-	pointer, isPointer := parseLFSPointer(reader)
-	if !isPointer {
-		return struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: reader,
-			Closer: resp.Body,
-		}, nil
-	}
+	return reader, resp.Body, nil
+}
 
-	resp.Body.Close()
-	return s.downloadLFSObject(ctx, owner, repo, pointer.OID, pointer.Size)
+func (s *Forgejo) detectLFSPointer(ctx context.Context, owner, repo, commit, filePath string) (lfsPointer, bool, error) {
+	reader, body, err := s.openRawReader(ctx, owner, repo, commit, filePath)
+	if err != nil {
+		return lfsPointer{}, false, err
+	}
+	defer body.Close()
+
+	pointer, isPointer := parseLFSPointer(reader)
+	return pointer, isPointer, nil
 }
 
 func (s *Forgejo) SearchRepos(ctx context.Context, query string) ([]string, error) {
@@ -611,14 +667,14 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	// 3. Worker Pool Setup
 	const numWorkers = 5
 	tasks := make(chan treeTask, 500000)
-	
+
 	var (
-		count       int64
-		firstErr    error
-		errMu       sync.Once
-		seenTrees   sync.Map 
-		
-		taskWG      sync.WaitGroup
+		count     int64
+		firstErr  error
+		errMu     sync.Once
+		seenTrees sync.Map
+
+		taskWG sync.WaitGroup
 	)
 
 	setFirstErr := func(err error) {
@@ -647,7 +703,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 					func() {
 						defer taskWG.Done()
-						
+
 						// Avoid re-indexing the same directory SHA
 						if !task.isRoot {
 							if _, loaded := seenTrees.LoadOrStore(task.sha, true); loaded {
@@ -738,9 +794,16 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 	if s.db != nil {
 		_ = s.db.MarkIndexed(ctx, rootSHA)
-		return s.db.Search(ctx, rootSHA, criteria)
+		entries, err := s.db.Search(ctx, rootSHA, criteria)
+		if err == nil && s.onProgress != nil {
+			s.onProgress(owner, repo, commit, count)
+		}
+		return entries, err
 	}
 
+	if s.onProgress != nil {
+		s.onProgress(owner, repo, commit, count)
+	}
 	return nil, nil
 }
 
@@ -759,11 +822,11 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 		if err == nil {
 			return nil
 		}
-		
+
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnsupportedSearchMode) {
 			return err
 		}
-		
+
 		lastErr = err
 	}
 	return fmt.Errorf("after 3 attempts: %w", lastErr)

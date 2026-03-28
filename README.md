@@ -14,7 +14,8 @@ Current stage:
 - Preview tree view with selected files
 - Shareable direct download URL copy action
 - Preview and config APIs
-- Streaming ZIP download endpoint
+- ZIP download endpoint with resumable byte ranges
+- Private direct download URLs backed by encrypted access tokens
 - Forgejo OAuth login routes (optional)
 
 ## Quick Start (Local Mode)
@@ -103,6 +104,8 @@ Set these environment variables:
 Optional:
 
 - `ZIP_FORGER_AUTH_REQUIRED` (defaults to `true` for Forgejo source)
+- `ZIP_FORGER_DOWNLOAD_URL_SECRET` (falls back to `ZIP_FORGER_SESSION_SECRET`, otherwise an ephemeral startup secret is generated)
+- `ZIP_FORGER_DOWNLOAD_URL_TTL` (defaults to `24h`)
 - `ZIP_FORGER_OAUTH_SCOPES` (comma-separated)
 - `ZIP_FORGER_SESSION_COOKIE_NAME`
 - `ZIP_FORGER_SESSION_COOKIE_SECURE`
@@ -134,7 +137,8 @@ Query filters for `download.zip`:
 
 ## Notes
 
-- ZIP output is streamed directly and not persisted.
-- `Range` resume is not fully implemented yet.
+- ZIP output is generated into the local cache before it is served.
+- `Range` byte resume is supported for completed archives.
+- Preview responses include a direct download URL; when a server secret is configured, authenticated previews return a private URL with an encrypted embedded access token.
 - Forgejo source mode detects Git LFS pointer files and resolves them through the LFS batch download flow.
 - Recursive tree listing falls back to Forgejo contents walk if tree responses are truncated.
