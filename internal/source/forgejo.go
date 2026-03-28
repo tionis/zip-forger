@@ -57,6 +57,8 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 
 	client := cfg.HTTPClient
 	if client == nil {
+		// Use a client without a global timeout for long-running indexing tasks.
+		// Individual requests are managed by context timeouts.
 		client = &http.Client{}
 	}
 
@@ -611,9 +613,25 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	var (
 		sem = make(chan struct{}, 5)
 		count int64
+		
+		firstErr error
+		errMu    sync.Mutex
 	)
 
 	g, ctx := errgroup.WithContext(ctx)
+	
+	// Helper to capture the very first real error
+	setFirstErr := func(err error) {
+		if err == nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		errMu.Lock()
+		defer errMu.Unlock()
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	var wg sync.WaitGroup
 	
 	var spawnTask func(task treeTask)
@@ -634,14 +652,14 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			if task.isRoot {
 				currentTree = rootTree
 			} else {
-				log.Printf("[INDEXER] Fetching %s (sha: %s)...", task.path, task.sha)
+				// Use a dedicated timeout for each individual fetch
 				fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				defer cancel()
 				currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
 				if fetchErr != nil {
+					setFirstErr(fetchErr)
 					if !errors.Is(fetchErr, context.Canceled) {
 						log.Printf("[INDEXER FATAL ERROR] Fetch failed for %s: %v", task.path, fetchErr)
-						// Pause for a second to ensure the log is flushed before the group cancels
 						time.Sleep(1 * time.Second)
 					}
 					return fetchErr
@@ -684,7 +702,11 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			}
 
 			if s.db != nil {
-				_ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
+				if err := s.db.SaveEntries(ctx, task.sha, entriesToSave); err != nil {
+					setFirstErr(err)
+					log.Printf("[INDEXER DB ERROR] Failed to save entries for %s: %v", task.path, err)
+					return err
+				}
 			}
 			return nil
 		})
@@ -696,19 +718,22 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 		wg.Wait()
 	}()
 
-	if err := g.Wait(); err != nil {
-		return nil, err
+	waitErr := g.Wait()
+	if waitErr != nil {
+		errMu.Lock()
+		final := firstErr
+		errMu.Unlock()
+		if final != nil {
+			return nil, final
+		}
+		return nil, waitErr
 	}
 
 	if s.db != nil {
 		_ = s.db.MarkIndexed(ctx, rootSHA)
-		// Now that we have indexed everything, return the filtered results from DB.
 		return s.db.Search(ctx, rootSHA, criteria)
 	}
 
-	// Fallback if no DB: This path is technically impossible now as we always search DB at end,
-	// but we need to return something. Since we didn't collect 'out' in memory anymore,
-	// we just return empty if DB is missing (which shouldn't happen).
 	return nil, nil
 }
 

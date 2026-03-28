@@ -39,6 +39,7 @@ func NewTreeDB(path string, logger *log.Logger) (*TreeDB, error) {
 	// Optimize for performance
 	_, _ = db.Exec("PRAGMA journal_mode=WAL")
 	_, _ = db.Exec("PRAGMA synchronous=NORMAL")
+	_, _ = db.Exec("PRAGMA busy_timeout=10000")
 
 	schema := `
 	CREATE TABLE IF NOT EXISTS indexed_trees (
