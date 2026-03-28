@@ -168,9 +168,10 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 	query.Set("client_id", m.cfg.ClientID)
 	query.Set("redirect_uri", m.cfg.RedirectURL)
 	query.Set("state", state)
-	query.Set("scope", strings.Join(m.cfg.Scopes, " "))
+	query.Set("scope", strings.Join(m.cfg.Scopes, ","))
 
 	redirectURL := m.cfg.ForgejoBaseURL + "/login/oauth/authorize?" + query.Encode()
+	m.logger.Printf("auth: redirecting to %s", redirectURL)
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
@@ -332,11 +333,18 @@ func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, t
 	if tokenResponse.TokenType == "" {
 		tokenResponse.TokenType = "token"
 	}
+	
+	// If scope is empty in response, it often means it matches the requested scopes.
+	grantedScope := tokenResponse.Scope
+	if grantedScope == "" {
+		grantedScope = strings.Join(m.cfg.Scopes, ",")
+	}
+
 	if tokenResponse.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second)
 	}
 
-	return tokenResponse.AccessToken, tokenResponse.TokenType, tokenResponse.Scope, expiresAt, nil
+	return tokenResponse.AccessToken, tokenResponse.TokenType, grantedScope, expiresAt, nil
 }
 
 func (m *Manager) storeState(key string, value oauthState) {
