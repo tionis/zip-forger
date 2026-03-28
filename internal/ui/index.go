@@ -289,9 +289,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .btn-download { color: #fff; background: var(--brand-strong); font-size: 0.92rem; padding: 9px 20px; min-height: 38px; font-weight: 600; }
     :root[data-theme="dark"] .btn-download { background: var(--brand); color: #111118; }
 
-    .message { min-height: 1rem; color: var(--muted); font-size: 0.86rem; }
-    .message.ok { color: var(--brand-strong); }
-    :root[data-theme="dark"] .message.ok { color: var(--brand); }
+    .message { min-height: 1rem; color: var(--muted); font-size: 0.86rem; flex-grow: 1; }
+    .message.ok { color: #1a6e3c; }
+    :root[data-theme="dark"] .message.ok { color: #6ddb96; }
     .message.err { color: var(--danger); }
 
     .stats-bar { display: flex; gap: 16px; padding: 8px 0; font-size: 0.84rem; }
@@ -346,7 +346,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     <header class="header">
       <div class="header-left">
         <h1 class="title">zip-forger</h1>
-        <span class="auth-badge" id="authBadge">checking...</span><p id="message" class="message" style="margin-left:12px; font-weight:500;"></p>
+        <span class="auth-badge" id="authBadge">checking...</span>
+        <p id="message" class="message" style="margin-left:12px; font-weight:500;"></p>
         <a class="btn ghost" id="loginBtn" href="/auth/login" hidden>Sign in</a>
         <button class="ghost" id="logoutBtn" type="button" hidden>Sign out</button>
       </div>
@@ -416,7 +417,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button class="ghost" id="previewBtn" type="button">Preview</button>
                 <button class="btn-download" id="downloadBtn" type="button" disabled>Download ZIP</button>
-                
               </div>
               
               <div id="indexProgress" hidden>
@@ -502,6 +502,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
+        nodes.logoutBtn.addEventListener("click", logout);
         nodes.useAdhoc.addEventListener("change", updateAdhocVisibility);
         
         nodes.repo.addEventListener("input", debounce(() => {
@@ -512,8 +513,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           });
         }, 300));
 
-        nodes.repo.addEventListener("change", onRepoChanged);
-        nodes.ref.addEventListener("change", onRepoChanged);
+        nodes.repo.addEventListener("change", () => run(async () => { await onRepoChanged(); await loadConfig(); }));
+        nodes.ref.addEventListener("change", () => run(async () => { await onRepoChanged(); await loadConfig(); }));
 
         nodes.themeButtons.forEach(btn => {
           btn.addEventListener("click", () => setThemeMode(btn.dataset.theme));
@@ -607,6 +608,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       async function apiFetch(url, opts = {}) {
         const res = await fetch(url, opts);
+        if (res.status === 204) return {};
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           throw new Error(data.message || "Request failed: " + res.status);
@@ -770,7 +772,15 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         return function(...args) { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
       }
 
+      async function logout() {
+        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+        window.location.reload();
+      }
+
       async function hydrateAuth() {
+        const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+        nodes.loginBtn.href = "/auth/login?return_to=" + returnTo;
+
         const data = await apiFetch("/auth/me").catch(() => ({}));
         if (data.authenticated) {
           nodes.authBadge.textContent = "signed in";
