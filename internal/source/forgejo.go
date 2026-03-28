@@ -634,12 +634,15 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			if task.isRoot {
 				currentTree = rootTree
 			} else {
-				fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				log.Printf("[INDEXER] Fetching %s (sha: %s)...", task.path, task.sha)
+				fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				defer cancel()
 				currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
 				if fetchErr != nil {
 					if !errors.Is(fetchErr, context.Canceled) {
-						log.Printf("[INDEXER ERROR] Fetch failed for %s (sha: %s): %v", task.path, task.sha, fetchErr)
+						log.Printf("[INDEXER FATAL ERROR] Fetch failed for %s: %v", task.path, fetchErr)
+						// Pause for a second to ensure the log is flushed before the group cancels
+						time.Sleep(1 * time.Second)
 					}
 					return fetchErr
 				}
