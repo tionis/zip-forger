@@ -139,7 +139,13 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	mux.Handle("GET /api/repos/search", searchReposHandler)
-	mux.Handle("GET /api/repos/{owner}/{repo}/index-progress", http.HandlerFunc(s.progress.HandleSSE))
+	mux.HandleFunc("GET /api/repos/{owner}/{repo}/index-progress", func(w http.ResponseWriter, r *http.Request) {
+		if s.progress == nil {
+			http.Error(w, "progress reporting disabled", http.StatusNotImplemented)
+			return
+		}
+		s.progress.HandleSSE(w, r)
+	})
 	mux.Handle("GET /api/repos/{owner}/{repo}/branches", branchesHandler)
 	mux.Handle("POST /api/repos/{owner}/{repo}/preview", previewHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/download.zip", downloadHandler)
