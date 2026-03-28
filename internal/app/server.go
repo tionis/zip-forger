@@ -368,8 +368,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Zip-Forger-Resume", "best-effort")
 	w.WriteHeader(http.StatusOK)
 
-	streamErr := zipstream.Stream(r.Context(), w, sel.Manifest.Entries, func(ctx context.Context, filePath string) (io.ReadCloser, error) {
-		return s.source.OpenFile(ctx, owner, repo, sel.Commit, filePath)
+	token, _ := source.AccessTokenFromContext(r.Context())
+	streamCtx := source.WithAccessToken(context.Background(), token)
+
+	streamErr := zipstream.Stream(r.Context(), w, sel.Manifest.Entries, func(_ context.Context, filePath string) (io.ReadCloser, error) {
+		return s.source.OpenFile(streamCtx, owner, repo, sel.Commit, filePath)
 	}, &zipstream.Options{
 		OnFileError: func(path string, err error) error {
 			if errors.Is(err, source.ErrNotFound) {
