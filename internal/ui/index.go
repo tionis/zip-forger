@@ -319,6 +319,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .index-bar-bg { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:4px; }
     .index-bar-fill { height:100%; width:0; background:var(--brand); transition: width 0.3s; }
 
+    .preset-item {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      margin-bottom: 10px;
+      display: grid;
+      gap: 8px;
+      background: var(--surface-alt);
+    }
+
+    .preset-item-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
     @media (max-width: 840px) {
       .dl-layout { grid-template-columns: 1fr; }
       .dl-sidebar { position: static; }
@@ -442,6 +458,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
   <script>
     (function () {
+      const THEME_KEY = "zip_forger.theme_mode";
       const state = { busy: false, preview: null, config: null };
       const nodes = {
         repo: document.getElementById("repo"),
@@ -473,6 +490,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         authBanner: document.getElementById("authBanner"),
         loginBtn: document.getElementById("loginBtn"),
         logoutBtn: document.getElementById("logoutBtn"),
+        themeButtons: Array.from(document.querySelectorAll("[data-theme]")),
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
         maxFilesPerDownload: document.getElementById("maxFilesPerDownload"),
         maxBytesPerDownload: document.getElementById("maxBytesPerDownload"),
@@ -480,6 +498,98 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         saveConfigBtn: document.getElementById("saveConfigBtn"),
         presetList: document.getElementById("presetList")
       };
+
+      initTheme();
+      wireEvents();
+      hydrateAuth();
+
+      function wireEvents() {
+        nodes.previewBtn.addEventListener("click", () => run(withLoading(nodes.previewBtn, "Loading...", previewSelection)));
+        nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
+        nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
+        nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
+        nodes.useAdhoc.addEventListener("change", updateAdhocVisibility);
+        
+        nodes.repo.addEventListener("input", debounce(() => {
+          const q = nodes.repo.value;
+          if (q.length < 2) return;
+          fetch("/api/repos/search?q=" + encodeURIComponent(q)).then(r => r.json()).then(data => {
+            nodes.repoOptions.innerHTML = (data.repos || []).map(r => '<option value="' + r + '">').join("");
+          });
+        }, 300));
+
+        nodes.repo.addEventListener("change", onRepoChanged);
+        nodes.ref.addEventListener("change", onRepoChanged);
+
+        nodes.themeButtons.forEach(btn => {
+          btn.addEventListener("click", () => setThemeMode(btn.dataset.theme));
+        });
+
+        document.querySelectorAll(".tab-btn").forEach(btn => {
+          btn.addEventListener("click", () => {
+            document.querySelectorAll(".tab-btn, .tab-panel").forEach(el => el.classList.remove("active"));
+            btn.classList.add("active");
+            document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+          });
+        });
+
+        updateAdhocVisibility();
+      }
+
+      function updateAdhocVisibility() {
+        nodes.adhocFields.style.display = nodes.useAdhoc.checked ? "grid" : "none";
+      }
+
+      async function run(fn) {
+        try { await fn(); } catch (err) { setMessage(err.message, "err"); }
+      }
+
+      function withLoading(btn, label, fn) {
+        return async function () {
+          if (state.busy) return;
+          state.busy = true;
+          const original = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = label;
+          try { await fn(); } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+            state.busy = false;
+          }
+        };
+      }
+
+      function setMessage(text, level) {
+        nodes.message.textContent = text;
+        nodes.message.className = "message" + (level ? " " + level : "");
+      }
+
+      /* ---- Theme ---- */
+      function initTheme() {
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+        const current = localStorage.getItem(THEME_KEY) || "system";
+        applyTheme(current);
+        media.addEventListener("change", () => {
+          if ((localStorage.getItem(THEME_KEY) || "system") === "system") {
+            applyTheme("system");
+          }
+        });
+      }
+
+      function setThemeMode(mode) {
+        localStorage.setItem(THEME_KEY, mode);
+        applyTheme(mode);
+      }
+
+      function applyTheme(mode) {
+        const resolved = mode === "system"
+          ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+          : mode;
+        document.documentElement.dataset.theme = resolved;
+        nodes.themeButtons.forEach(btn => {
+          btn.classList.toggle("active", btn.dataset.theme === mode);
+        });
+      }
 
       let progressSource = null;
       function startProgressTracking(owner, repo, commit) {
@@ -503,11 +613,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       async function apiFetch(url, opts = {}) {
         const res = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
           throw new Error(data.message || "Request failed: " + res.status);
         }
-        return res.json();
+        return data;
       }
 
       function updateRepoSummary() {
@@ -522,22 +632,21 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.repoSummary.hidden = false;
       }
 
+      async function onRepoChanged() {
+        const parts = nodes.repo.value.split("/");
+        if (parts.length < 2) return;
+        const data = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches");
+        nodes.branchOptions.innerHTML = (data.branches || []).map(b => '<option value="' + b + '">').join("");
+        updateRepoSummary();
+      }
+
       async function previewSelection() {
         const full = nodes.repo.value.trim();
         const parts = full.split("/");
         if (parts.length < 2) return;
         
-        state.busy = true;
-        nodes.previewBtn.disabled = true;
-        nodes.message.textContent = "Requesting preview...";
-        
         try {
-          // Resolve commit first to start progress tracking correctly
-          const res = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches");
-          const commit = nodes.ref.value || (res.branches && res.branches[0]) || "main";
-          
-          startProgressTracking(parts[0], parts[1], commit);
-          
+          startProgressTracking(parts[0], parts[1], nodes.ref.value || "main");
           const payload = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/preview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -558,15 +667,88 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.bytesValue.textContent = formatBytes(payload.totalBytes);
           nodes.treeView.textContent = (payload.entries || []).join("\n");
           nodes.downloadBtn.disabled = false;
-          nodes.message.textContent = "Ready.";
+          setMessage("Ready.", "ok");
           updateRepoSummary();
-        } catch (e) {
-          nodes.message.textContent = e.message;
         } finally {
           stopProgressTracking();
-          state.busy = false;
-          nodes.previewBtn.disabled = false;
         }
+      }
+
+      async function loadConfig() {
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return;
+        const query = nodes.ref.value ? "?ref=" + encodeURIComponent(nodes.ref.value) : "";
+        const data = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config" + query);
+        state.config = data.config;
+        
+        nodes.preset.innerHTML = '<option value="">(none)</option>';
+        (state.config.presets || []).forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.id + (p.description ? " - " + p.description : "");
+          nodes.preset.appendChild(opt);
+        });
+
+        nodes.allowAdhocFilters.checked = state.config.options?.allowAdhocFilters !== false;
+        nodes.maxFilesPerDownload.value = state.config.options?.maxFilesPerDownload || "";
+        nodes.maxBytesPerDownload.value = state.config.options?.maxBytesPerDownload || "";
+        
+        renderPresetEditor();
+        setMessage("Config loaded.", "ok");
+      }
+
+      function renderPresetEditor() {
+        nodes.presetList.innerHTML = "";
+        (state.config.presets || []).forEach((p, i) => {
+          const item = document.createElement("div");
+          item.className = "preset-item";
+          item.innerHTML = 
+            '<div class="preset-item-head">' +
+              '<strong>' + (p.id || "new-preset") + '</strong>' +
+              '<button class="danger-btn" onclick="removePreset(' + i + ')">Delete</button>' +
+            '</div>' +
+            '<label>ID <input value="' + (p.id || "") + '" oninput="updatePreset(' + i + ', \'id\', this.value)"></label>' +
+            '<label>Description <input value="' + (p.description || "") + '" oninput="updatePreset(' + i + ', \'description\', this.value)"></label>' +
+            '<label>Extensions <input value="' + (p.extensions || []).join(", ") + '" oninput="updatePreset(' + i + ', \'extensions\', this.value)"></label>' +
+            '<label>Prefixes <input value="' + (p.pathPrefixes || []).join(", ") + '" oninput="updatePreset(' + i + ', \'pathPrefixes\', this.value)"></label>';
+          nodes.presetList.appendChild(item);
+        });
+      }
+
+      window.updatePreset = (idx, key, val) => {
+        if (key === 'extensions' || key === 'pathPrefixes') {
+          state.config.presets[idx][key] = val.split(",").map(s => s.trim()).filter(Boolean);
+        } else {
+          state.config.presets[idx][key] = val;
+        }
+      };
+
+      window.removePreset = (idx) => {
+        state.config.presets.splice(idx, 1);
+        renderPresetEditor();
+      };
+
+      function addPresetRow() {
+        state.config.presets = state.config.presets || [];
+        state.config.presets.push({ id: "", description: "", extensions: [], pathPrefixes: [] });
+        renderPresetEditor();
+      }
+
+      async function saveConfig() {
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return;
+        await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ref: nodes.ref.value || "main",
+            config: state.config,
+            commitMessage: "chore: update presets"
+          })
+        });
+        setMessage("Config saved.", "ok");
       }
 
       function formatBytes(b) {
@@ -577,34 +759,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         return b.toFixed(2) + " " + units[i];
       }
 
-      document.querySelectorAll(".tab-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".tab-btn, .tab-panel").forEach(el => el.classList.remove("active"));
-          btn.classList.add("active");
-          document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
-        });
-      });
+      function debounce(fn, ms) {
+        let t;
+        return function(...args) { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+      }
 
-      nodes.previewBtn.addEventListener("click", previewSelection);
-      nodes.repo.addEventListener("input", () => {
-        const q = nodes.repo.value;
-        if (q.length < 2) return;
-        fetch("/api/repos/search?q=" + encodeURIComponent(q)).then(r => r.json()).then(data => {
-          nodes.repoOptions.innerHTML = (data.repos || []).map(r => '<option value="' + r + '">').join("");
-        });
-      });
-
-      nodes.repo.addEventListener("change", () => {
-        const parts = nodes.repo.value.split("/");
-        if (parts.length < 2) return;
-        fetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches")
-          .then(r => r.json()).then(data => {
-            nodes.branchOptions.innerHTML = (data.branches || []).map(b => '<option value="' + b + '">').join("");
-          });
-        updateRepoSummary();
-      });
-
-      fetch("/auth/me").then(r => r.json()).then(data => {
+      async function hydrateAuth() {
+        const data = await apiFetch("/auth/me").catch(() => ({}));
         if (data.authenticated) {
           nodes.authBadge.textContent = "signed in";
           nodes.authBadge.classList.add("state-signed-in");
@@ -613,7 +774,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.authBadge.textContent = "not signed in";
           nodes.loginBtn.hidden = false;
         }
-      });
+      }
     })();
   </script>
 </body>
