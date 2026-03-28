@@ -364,7 +364,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
     <nav class="tab-bar">
       <button class="tab-btn active" data-tab="download">Download</button>
-      <button class="tab-btn" data-tab="configure">Configure</button>
+      <button class="tab-btn" id="configureTabBtn" data-tab="configure" disabled>Configure</button>
     </nav>
 
     <div class="tab-panel active" id="panel-download">
@@ -490,22 +490,30 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
         addPresetBtn: document.getElementById("addPresetBtn"),
         saveConfigBtn: document.getElementById("saveConfigBtn"),
-        presetList: document.getElementById("presetList")
+        presetList: document.getElementById("presetList"),
+        configureTabBtn: document.getElementById("configureTabBtn")
       };
 
       initTheme();
       wireEvents();
       hydrateAuth();
+      hydrateFromUrl();
 
       function wireEvents() {
         nodes.previewBtn.addEventListener("click", () => run(withLoading(nodes.previewBtn, "Loading...", previewSelection)));
-        nodes.downloadBtn.addEventListener("click", downloadZip);
         nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
+        nodes.downloadBtn.addEventListener("click", downloadZip);
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.logoutBtn.addEventListener("click", logout);
-        nodes.useAdhoc.addEventListener("change", updateAdhocVisibility);
+        nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
+        nodes.copyUrlBtn.addEventListener("click", copyShareURL);
         
+        const updateEvents = ["input", "change"];
+        [nodes.ref, nodes.preset, nodes.includeGlobs, nodes.excludeGlobs, nodes.extensions, nodes.prefixes].forEach(node => {
+          updateEvents.forEach(ev => node.addEventListener(node === nodes.includeGlobs || node === nodes.excludeGlobs ? "input" : ev, updateShareURL));
+        });
+
         nodes.repo.addEventListener("input", debounce(() => {
           const q = nodes.repo.value;
           if (q.length < 2) return;
@@ -514,7 +522,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           });
         }, 300));
 
-        nodes.repo.addEventListener("change", () => run(async () => { await onRepoChanged(); await loadConfig(); }));
+        nodes.repo.addEventListener("change", () => run(async () => { 
+          await onRepoChanged(); 
+          if (nodes.repo.value.includes("/")) {
+            await loadConfig(); 
+          }
+        }));
         nodes.ref.addEventListener("change", () => run(async () => { await onRepoChanged(); await loadConfig(); }));
 
         nodes.themeButtons.forEach(btn => {
@@ -523,6 +536,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
         document.querySelectorAll(".tab-btn").forEach(btn => {
           btn.addEventListener("click", () => {
+            if (btn.disabled) return;
             document.querySelectorAll(".tab-btn, .tab-panel").forEach(el => el.classList.remove("active"));
             btn.classList.add("active");
             document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
@@ -558,6 +572,59 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       function setMessage(text, level) {
         nodes.message.textContent = text;
         nodes.message.className = "message" + (level ? " " + level : "");
+      }
+
+      function updateShareURL() {
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) {
+          nodes.shareUrl.value = "";
+          nodes.configureTabBtn.disabled = true;
+          return;
+        }
+        nodes.configureTabBtn.disabled = false;
+
+        const url = new URL(window.location.origin + window.location.pathname);
+        url.searchParams.set("repo", full);
+        if (nodes.ref.value) url.searchParams.set("ref", nodes.ref.value);
+        if (nodes.preset.value) url.searchParams.set("preset", nodes.preset.value);
+        
+        if (nodes.useAdhoc.checked) {
+          url.searchParams.set("adhoc", "1");
+          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => url.searchParams.append("include", g));
+          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => url.searchParams.append("exclude", g));
+          if (nodes.extensions.value) url.searchParams.set("ext", nodes.extensions.value);
+          if (nodes.prefixes.value) url.searchParams.set("prefix", nodes.prefixes.value);
+        }
+        
+        nodes.shareUrl.value = url.toString();
+        updateRepoSummary();
+      }
+
+      function copyShareURL() {
+        nodes.shareUrl.select();
+        document.execCommand("copy");
+        setMessage("URL copied to clipboard.", "ok");
+      }
+
+      function hydrateFromUrl() {
+        const params = new URL(window.location.href).searchParams;
+        if (params.get("repo")) nodes.repo.value = params.get("repo");
+        if (params.get("ref")) nodes.ref.value = params.get("ref");
+        if (params.get("preset")) nodes.preset.value = params.get("preset");
+        if (params.get("adhoc") === "1") {
+          nodes.useAdhoc.checked = true;
+          nodes.includeGlobs.value = params.getAll("include").join("\n");
+          nodes.excludeGlobs.value = params.getAll("exclude").join("\n");
+          nodes.extensions.value = params.get("ext") || "";
+          nodes.prefixes.value = params.get("prefix") || "";
+        }
+        if (nodes.repo.value) {
+          onRepoChanged();
+          loadConfig();
+        }
+        updateAdhocVisibility();
+        updateShareURL();
       }
 
       /* ---- Theme ---- */
@@ -635,7 +702,34 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (parts.length < 2) return;
         const data = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches");
         nodes.branchOptions.innerHTML = (data.branches || []).map(b => '<option value="' + b + '">').join("");
-        updateRepoSummary();
+        updateShareURL();
+      }
+
+      async function downloadZip() {
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return;
+
+        const query = new URLSearchParams();
+        if (nodes.ref.value) query.set("ref", nodes.ref.value);
+        if (nodes.preset.value) query.set("preset", nodes.preset.value);
+        
+        if (nodes.useAdhoc.checked) {
+          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("include", g));
+          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("exclude", g));
+          nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean).forEach(e => query.append("ext", e));
+          nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean).forEach(p => query.append("prefix", p));
+        }
+
+        const url = "/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/download.zip?" + query.toString();
+        // Crucial: Use a temporary link to ensure browsers handle the download 
+        // while preserving the user session (cookies).
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
       }
 
       async function previewSelection() {
@@ -644,10 +738,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (parts.length < 2) return;
         
         try {
-          // We start progress tracking with the ref, but we will RE-START it 
-          // once we get the real commit SHA from the backend.
           startProgressTracking(parts[0], parts[1], nodes.ref.value || "main");
-
           const payload = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/preview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -662,9 +753,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               }
             })
           });
-          // Restart tracking with the real immutable commit SHA
-          startProgressTracking(parts[0], parts[1], payload.commit);
-
           state.preview = payload;
           nodes.commitValue.textContent = payload.commit.substring(0,8);
           nodes.filesValue.textContent = payload.selectedFiles.toLocaleString();
@@ -672,7 +760,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.treeView.textContent = (payload.entries || []).join("\n");
           nodes.downloadBtn.disabled = false;
           setMessage("Ready.", "ok");
-          updateRepoSummary();
+          updateShareURL();
         } finally {
           stopProgressTracking();
         }
@@ -767,26 +855,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           setMessage("Save failed: " + e.message + ". Try signing out and in again to refresh permissions.", "err");
           throw e;
         }
-      }
-
-      async function downloadZip() {
-        const full = nodes.repo.value.trim();
-        const parts = full.split("/");
-        if (parts.length < 2) return;
-
-        const query = new URLSearchParams();
-        if (nodes.ref.value) query.set("ref", nodes.ref.value);
-        if (nodes.preset.value) query.set("preset", nodes.preset.value);
-        
-        if (nodes.useAdhoc.checked) {
-          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("include", g));
-          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("exclude", g));
-          nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean).forEach(e => query.append("ext", e));
-          nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean).forEach(p => query.append("prefix", p));
-        }
-
-        const url = "/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/download.zip?" + query.toString();
-        window.location.href = url;
       }
 
       function formatBytes(b) {
