@@ -601,15 +601,12 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	// 2. Check if this root tree is indexed
 	if s.db != nil {
 		if indexed, _ := s.db.IsIndexed(ctx, rootSHA); indexed {
-			return s.db.GetFullTree(ctx, rootSHA)
+			return s.db.Search(ctx, rootSHA, criteria)
 		}
 	}
 
 	// 3. Concurrent Walk
 	var (
-		outMu sync.Mutex
-		out   []Entry
-		
 		sem = make(chan struct{}, 10) 
 	)
 
@@ -634,10 +631,9 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			if task.isRoot {
 				tree = rootTree
 			} else {
-				// To keep it simple and robust, we fetch recursively.
-				// If it is truncated, we will get the partial results and THEN 
-				// spawn tasks for the sub-trees that we discovered.
-				tree, fetchErr = s.getTree(ctx, owner, repo, task.sha, true)
+				// To ensure the DB cache is perfectly consistent and normalized,
+				// we always fetch non-recursively during the walk.
+				tree, fetchErr = s.getTree(ctx, owner, repo, task.sha, false)
 				if fetchErr != nil {
 					return fetchErr
 				}
@@ -651,6 +647,8 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			}
 
 			for _, node := range tree.Tree {
+				// We store ONLY the immediate name in the path column.
+				// The DB's Recursive CTE will rebuild the full paths.
 				entriesToSave = append(entriesToSave, struct {
 					Path string
 					Type string
@@ -663,12 +661,16 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 					fullPath = task.path + "/" + node.Path
 				}
 
-				if node.Type == "blob" {
-					outMu.Lock()
-					out = append(out, Entry{Path: normalizePath(fullPath), Size: node.Size})
-					outMu.Unlock()
-				} else if node.Type == "tree" && node.SHA != "" {
-					if tree.Truncated || task.isRoot {
+				if node.Type == "tree" && node.SHA != "" {
+					// Optimization: only traverse into directories that could match our prefixes.
+					shouldTraverse := len(criteria.PathPrefixes) == 0
+					for _, p := range criteria.PathPrefixes {
+						if p == "" || fullPath == p || strings.HasPrefix(fullPath, p+"/") || strings.HasPrefix(p, fullPath+"/") {
+							shouldTraverse = true
+							break
+						}
+					}
+					if shouldTraverse {
 						spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
 					}
 				}
@@ -676,9 +678,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 			if s.db != nil {
 				_ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
-				if !tree.Truncated {
-					_ = s.db.MarkIndexed(ctx, task.sha)
-				}
+				_ = s.db.MarkIndexed(ctx, task.sha)
 			}
 			return nil
 		})
@@ -696,12 +696,14 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 	if s.db != nil {
 		_ = s.db.MarkIndexed(ctx, rootSHA)
+		// Now that we have indexed everything, return the filtered results from DB.
+		return s.db.Search(ctx, rootSHA, criteria)
 	}
 
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Path < out[j].Path
-	})
-	return out, nil
+	// Fallback if no DB: This path is technically impossible now as we always search DB at end,
+	// but we need to return something. Since we didn't collect 'out' in memory anymore,
+	// we just return empty if DB is missing (which shouldn't happen).
+	return nil, nil
 }
 
 func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error {

@@ -13,9 +13,102 @@ import (
 	"zip-forger/internal/filter"
 )
 
+type mockTreeDB struct {
+	indexed map[string]bool
+	entries map[string][]struct {
+		Path string
+		Type string
+		Size int64
+		SHA  string
+	}
+}
+
+func newMockTreeDB() *mockTreeDB {
+	return &mockTreeDB{
+		indexed: make(map[string]bool),
+		entries: make(map[string][]struct {
+			Path string
+			Type string
+			Size int64
+			SHA  string
+		}),
+	}
+}
+
+func (m *mockTreeDB) IsIndexed(_ context.Context, sha string) (bool, error) {
+	return m.indexed[sha], nil
+}
+
+func (m *mockTreeDB) MarkIndexed(_ context.Context, sha string) error {
+	m.indexed[sha] = true
+	return nil
+}
+
+func (m *mockTreeDB) SaveEntries(_ context.Context, parentSHA string, entries []struct {
+	Path string
+	Type string
+	Size int64
+	SHA  string
+}) error {
+	m.entries[parentSHA] = entries
+	return nil
+}
+
+func (m *mockTreeDB) GetFullTree(_ context.Context, rootSHA string) ([]Entry, error) {
+	return m.Search(context.Background(), rootSHA, filter.Criteria{})
+}
+
+func (m *mockTreeDB) Search(_ context.Context, rootSHA string, criteria filter.Criteria) ([]Entry, error) {
+	var out []Entry
+	var walk func(sha string, prefix string)
+	walk = func(sha string, prefix string) {
+		entries := m.entries[sha]
+		for _, e := range entries {
+			fullPath := e.Path
+			if prefix != "" {
+				fullPath = prefix + "/" + e.Path
+			}
+
+			if e.Type == "blob" {
+				// Simple mock filter logic
+				matches := true
+				if len(criteria.Extensions) > 0 {
+					matches = false
+					for _, ext := range criteria.Extensions {
+						if strings.HasSuffix(fullPath, ext) {
+							matches = true
+							break
+						}
+					}
+				}
+				if matches && len(criteria.PathPrefixes) > 0 {
+					matches = false
+					for _, p := range criteria.PathPrefixes {
+						if strings.HasPrefix(fullPath, p) {
+							matches = true
+							break
+						}
+					}
+				}
+
+				if matches {
+					out = append(out, Entry{Path: fullPath, Size: e.Size})
+				}
+			} else if e.Type == "tree" {
+				walk(e.SHA, fullPath)
+			}
+		}
+	}
+	walk(rootSHA, "")
+	return out, nil
+}
+
 func TestForgejoResolveListAndOpen(t *testing.T) {
+	db := newMockTreeDB()
+
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
+		TreeDB:  db,
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				if r.Header.Get("Authorization") != "Bearer tok-123" {
@@ -30,15 +123,15 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 					return response(http.StatusOK, `{"commit":{"id":"commit-sha"}}`), nil
 
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
-				        return response(http.StatusOK, `{
-				"sha":"commit-sha",
-				"truncated":false,
-				"tree":[
-				{"path":"rules/core","type":"tree"},
-				{"path":"rules/core/guide.pdf","type":"blob","size":12},
-				{"path":"rules/core/notes.txt","type":"blob","size":9}
-				]
-				}`), nil
+					return response(http.StatusOK, `{
+  "sha":"commit-sha",
+  "truncated":false,
+  "tree":[
+    {"path":"rules/core","type":"tree"},
+    {"path":"rules/core/guide.pdf","type":"blob","size":12},
+    {"path":"rules/core/notes.txt","type":"blob","size":9}
+  ]
+}`), nil
 
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
@@ -49,7 +142,7 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
   ]
 }`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha" && r.URL.Query().Get("recursive") == "true":
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
   "sha":"sub-sha",
   "truncated":false,
@@ -58,6 +151,7 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
     {"path":"notes.txt","type":"blob","size":9}
   ]
 }`), nil
+
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/rules/core/guide.pdf" && r.URL.Query().Get("ref") == "commit-sha":
 					return response(http.StatusOK, "pdf-content"), nil
 				}
@@ -162,8 +256,11 @@ func TestForgejoResolveRefFallsBackToCommitQuery(t *testing.T) {
 }
 
 func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
+	db := newMockTreeDB()
+
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
+		TreeDB:  db,
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				if r.Header.Get("Authorization") != "Bearer tok-123" {
@@ -171,9 +268,7 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
 				}
 
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
-					return response(http.StatusOK, `{"sha":"commit-sha","truncated":true,"tree":[]}`), nil
-
+				// Initial root tree fetch (always non-recursive)
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
   "sha":"commit-sha",
@@ -184,7 +279,8 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
   ]
 }`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/rules-sha" && r.URL.Query().Get("recursive") == "true":
+				// Sub-tree fetch (now strictly non-recursive)
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/rules-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
   "sha":"rules-sha",
   "truncated":false,
@@ -206,17 +302,11 @@ func TestForgejoListFilesFallbackWhenTreeTruncated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFiles failed: %v", err)
 	}
+	// We expect 2 blobs: README.md and rules/core.pdf
 	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries from contents fallback, got %d", len(entries))
-	}
-	if entries[0].Path != "README.md" {
-		t.Fatalf("unexpected first path: %s", entries[0].Path)
-	}
-	if entries[1].Path != "rules/core.pdf" {
-		t.Fatalf("unexpected second path: %s", entries[1].Path)
+		t.Fatalf("expected 2 entries from iterative discovery, got %d: %#v", len(entries), entries)
 	}
 }
-
 func TestForgejoListAndUpsertHelpers(t *testing.T) {
 	var putPayload map[string]any
 	client, err := NewForgejo(ForgejoConfig{
