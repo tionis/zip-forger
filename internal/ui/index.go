@@ -499,6 +499,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
       function wireEvents() {
         nodes.previewBtn.addEventListener("click", () => run(withLoading(nodes.previewBtn, "Loading...", previewSelection)));
+        nodes.downloadBtn.addEventListener("click", downloadZip);
         nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
         nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
@@ -766,6 +767,26 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           setMessage("Save failed: " + e.message + ". Try signing out and in again to refresh permissions.", "err");
           throw e;
         }
+      }
+
+      async function downloadZip() {
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return;
+
+        const query = new URLSearchParams();
+        if (nodes.ref.value) query.set("ref", nodes.ref.value);
+        if (nodes.preset.value) query.set("preset", nodes.preset.value);
+        
+        if (nodes.useAdhoc.checked) {
+          nodes.includeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("include", g));
+          nodes.excludeGlobs.value.split("\n").filter(Boolean).forEach(g => query.append("exclude", g));
+          nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean).forEach(e => query.append("ext", e));
+          nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean).forEach(p => query.append("prefix", p));
+        }
+
+        const url = "/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/download.zip?" + query.toString();
+        window.location.href = url;
       }
 
       function formatBytes(b) {
