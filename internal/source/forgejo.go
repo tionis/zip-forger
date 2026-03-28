@@ -609,7 +609,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 	// 3. Concurrent Walk
 	var (
-		sem = make(chan struct{}, 20)
+		sem = make(chan struct{}, 5)
 		count int64
 	)
 
@@ -626,7 +626,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				return nil // Don't return ctx.Err() as it masks the real error
+				return nil
 			}
 
 			var currentTree treeResponse
@@ -634,12 +634,14 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			if task.isRoot {
 				currentTree = rootTree
 			} else {
-				// Use a dedicated timeout for each individual fetch
 				fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()
 				currentTree, fetchErr = s.getTree(fetchCtx, owner, repo, task.sha, false)
 				if fetchErr != nil {
-					return fmt.Errorf("fetch %s failed: %w", task.path, fetchErr)
+					if !errors.Is(fetchErr, context.Canceled) {
+						log.Printf("[INDEXER ERROR] Fetch failed for %s (sha: %s): %v", task.path, task.sha, fetchErr)
+					}
+					return fetchErr
 				}
 			}
 
@@ -762,7 +764,7 @@ func (s *Forgejo) doGetJSON(ctx context.Context, endpoint string, into any) erro
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("source: forgejo request failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("source: forgejo request failed (url: %s) status=%d body=%q", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
