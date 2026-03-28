@@ -145,8 +145,18 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
   "sha":"sub-sha-core",
   "truncated":false,
   "tree":[
+    {"path":"docs","type":"tree", "sha":"sub-sha-docs"},
     {"path":"guide.pdf","type":"blob","size":12},
     {"path":"notes.txt","type":"blob","size":9}
+  ]
+}`), nil
+
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha-docs" && r.URL.Query().Get("recursive") == "":
+					return response(http.StatusOK, `{
+  "sha":"sub-sha-docs",
+  "truncated":false,
+  "tree":[
+    {"path":"manual.pdf","type":"blob","size":100}
   ]
 }`), nil
 
@@ -174,10 +184,10 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFiles failed: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 blob entries, got %d", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 blob entries, got %d", len(entries))
 	}
-	if entries[0].Path != "rules/core/guide.pdf" {
+	if entries[0].Path != "README.md" && entries[0].Path != "rules/core/docs/manual.pdf" {
 		t.Fatalf("unexpected first entry: %#v", entries[0])
 	}
 

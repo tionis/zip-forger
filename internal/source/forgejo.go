@@ -626,19 +626,6 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 				return ctx.Err()
 			}
 
-			var tree treeResponse
-			var fetchErr error
-			if task.isRoot {
-				tree = rootTree
-			} else {
-				// To ensure the DB cache is perfectly consistent and normalized,
-				// we always fetch non-recursively during the walk.
-				tree, fetchErr = s.getTree(ctx, owner, repo, task.sha, false)
-				if fetchErr != nil {
-					return fetchErr
-				}
-			}
-
 			var entriesToSave []struct {
 				Path string
 				Type string
@@ -646,7 +633,20 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 				SHA  string
 			}
 
-			for _, node := range tree.Tree {
+			var currentTree treeResponse
+			if task.isRoot {
+				currentTree = rootTree
+			} else {
+				// To ensure the DB cache is perfectly consistent and normalized,
+				// we always fetch non-recursively during the walk.
+				var fetchErr error
+				currentTree, fetchErr = s.getTree(ctx, owner, repo, task.sha, false)
+				if fetchErr != nil {
+					return fetchErr
+				}
+			}
+
+			for _, node := range currentTree.Tree {
 				// Normalize the name: we want ONLY the immediate name (basename)
 				// to be stored in the 'path' column so the Recursive CTE can 
 				// join them correctly.
@@ -678,7 +678,6 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 			if s.db != nil {
 				_ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
-				_ = s.db.MarkIndexed(ctx, task.sha)
 			}
 			return nil
 		})

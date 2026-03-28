@@ -111,8 +111,12 @@ func (c *TreeDB) SaveEntries(ctx context.Context, parentSHA string, entries []st
 func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entry, error) {
 	query := `
 	WITH RECURSIVE walk(full_path, type, size, sha) AS (
+		-- Start with immediate children of the root. 
+		-- The full_path is just their own path (name).
 		SELECT path, type, size, sha FROM tree_entries WHERE parent_tree_sha = ?
 		UNION ALL
+		-- Join with their children.
+		-- The full_path is parent's full_path + / + child's path.
 		SELECT walk.full_path || '/' || tree_entries.path, tree_entries.type, tree_entries.size, tree_entries.sha
 		FROM walk
 		JOIN tree_entries ON tree_entries.parent_tree_sha = walk.sha
@@ -120,6 +124,29 @@ func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entr
 	)
 	SELECT full_path, size FROM walk WHERE type = 'blob'
 	`
+	// Actually, the logic above is what I had. Let's look closer.
+	// If parent_tree_sha = root, and it has a child 'rules' (type=tree, sha=rules-sha).
+	// Row 1: full_path='rules', type='tree', sha='rules-sha'
+	// Next iteration:
+	// JOIN tree_entries WHERE parent_tree_sha = 'rules-sha'
+	// If 'rules-sha' has child 'core' (type=tree, sha=core-sha)
+	// Row 2: full_path='rules' || '/' || 'core' = 'rules/core'
+	// This actually looks CORRECT.
+	
+	// Wait! I found the real bug. In forgejo.go, I am saving entries like this:
+	// entriesToSave = append(entriesToSave, struct{Path: name, ...}{Path: name, ...})
+	// Where 'name' is path.Base(normalizePath(node.Path)).
+	
+	// But what if node.Type == "tree"?
+	// I spawn a task: spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
+	// And listFilesByTrees uses task.sha to fetch.
+	
+	// I see it! In Forgejo.go:
+	// _ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
+	// I am saving the entries using their OWN sha as the parent_tree_sha?
+	// No, task.sha IS the parent tree sha. This is correct.
+	
+	// Let's re-verify the Search method in tree_db.go.
 	rows, err := c.db.QueryContext(ctx, query, rootSHA)
 	if err != nil {
 		return nil, err
@@ -141,8 +168,10 @@ func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entr
 func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Criteria) ([]source.Entry, error) {
 	cte := `
 	WITH RECURSIVE walk(full_path, type, size, sha) AS (
+		-- Start with children of the root
 		SELECT path, type, size, sha FROM tree_entries WHERE parent_tree_sha = ?
 		UNION ALL
+		-- Join with sub-children
 		SELECT walk.full_path || '/' || tree_entries.path, tree_entries.type, tree_entries.size, tree_entries.sha
 		FROM walk
 		JOIN tree_entries ON tree_entries.parent_tree_sha = walk.sha
@@ -150,34 +179,40 @@ func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Cri
 	)
 	SELECT full_path, size FROM walk WHERE type = 'blob'`
 
-	whereParts := []string{}
-	args := []any{rootSHA}
-
-	if len(criteria.PathPrefixes) > 0 {
-		var prefixParts []string
-		for _, p := range criteria.PathPrefixes {
-			p = strings.TrimRight(p, "/")
-			if p == "" {
-				continue
-			}
-			// Strict directory prefix matching: either the path is the prefix, or it starts with "prefix/"
-			prefixParts = append(prefixParts, "(full_path = ? OR full_path LIKE ?)")
-			args = append(args, p, p+"/%")
-		}
-		if len(prefixParts) > 0 {
-			whereParts = append(whereParts, "("+strings.Join(prefixParts, " OR ")+")")
+	// Normalize criteria
+	prefixes := []string{}
+	for _, p := range criteria.PathPrefixes {
+		p = strings.Trim(p, "/")
+		if p != "" {
+			prefixes = append(prefixes, p)
 		}
 	}
 
-	if len(criteria.Extensions) > 0 {
+	extensions := []string{}
+	for _, e := range criteria.Extensions {
+		if !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		extensions = append(extensions, e)
+	}
+
+	whereParts := []string{}
+	args := []any{rootSHA}
+
+	if len(prefixes) > 0 {
+		var prefixParts []string
+		for _, p := range prefixes {
+			prefixParts = append(prefixParts, "(full_path = ? OR full_path LIKE ?)")
+			args = append(args, p, p+"/%")
+		}
+		whereParts = append(whereParts, "("+strings.Join(prefixParts, " OR ")+")")
+	}
+
+	if len(extensions) > 0 {
 		var extParts []string
-		for _, e := range criteria.Extensions {
-			prefixParts := ""
-			if !strings.HasPrefix(e, ".") {
-				prefixParts = "."
-			}
+		for _, e := range extensions {
 			extParts = append(extParts, "full_path LIKE ?")
-			args = append(args, "%"+prefixParts+e)
+			args = append(args, "%"+e)
 		}
 		whereParts = append(whereParts, "("+strings.Join(extParts, " OR ")+")")
 	}
