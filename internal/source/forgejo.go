@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"zip-forger/internal/filter"
@@ -55,7 +54,7 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{}
 	}
 
 	return &Forgejo{
@@ -607,7 +606,7 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 
 	// 3. Concurrent Walk
 	var (
-		sem = make(chan struct{}, 10) 
+		sem = make(chan struct{}, 20) 
 	)
 
 	g, ctx := errgroup.WithContext(ctx)
