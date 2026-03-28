@@ -740,16 +740,21 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (parts.length < 2) return;
         state.config.options = state.config.options || {};
         state.config.options.allowAdhocFilters = nodes.allowAdhocFilters.checked;
-        await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ref: nodes.ref.value || "main",
-            config: state.config,
-            commitMessage: "chore: update presets"
-          })
-        });
-        setMessage("Config saved.", "ok");
+        try {
+          await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ref: nodes.ref.value || "main",
+              config: state.config,
+              commitMessage: "chore: update presets"
+            })
+          });
+          setMessage("Config saved successfully.", "ok");
+        } catch (e) {
+          setMessage("Save failed: " + e.message + ". Try signing out and in again to refresh permissions.", "err");
+          throw e;
+        }
       }
 
       function formatBytes(b) {
