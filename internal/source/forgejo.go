@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"zip-forger/internal/filter"
@@ -705,6 +706,33 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 }
 
 func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			// Backoff before retry
+			select {
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		err := s.doGetJSON(ctx, endpoint, into)
+		if err == nil {
+			return nil
+		}
+		
+		// Don't retry on certain errors
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnsupportedSearchMode) {
+			return err
+		}
+		
+		lastErr = err
+	}
+	return fmt.Errorf("after 3 attempts: %w", lastErr)
+}
+
+func (s *Forgejo) doGetJSON(ctx context.Context, endpoint string, into any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
