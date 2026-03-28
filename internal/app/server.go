@@ -109,6 +109,7 @@ func NewServer(deps Dependencies) *Server {
 		source:        deps.Source,
 		manifestCache: manifestCache,
 		auth:          deps.Auth,
+		progress:      deps.Progress,
 		logger:        logger,
 	}
 }
