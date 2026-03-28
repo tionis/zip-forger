@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net/http"
@@ -47,6 +48,7 @@ type Server struct {
 	artifactStore *ArtifactStore
 	privateURL    *PrivateDownloadCodec
 	logger        *log.Logger
+	crcCache      *crcCache
 }
 
 type previewRequest struct {
@@ -135,6 +137,7 @@ func NewServer(deps Dependencies) *Server {
 		artifactStore: artifactStore,
 		privateURL:    deps.PrivateURL,
 		logger:        logger,
+		crcCache:      newCRCCache(),
 	}
 }
 
@@ -566,61 +569,80 @@ func (s *Server) buildSelectionForCommit(ctx context.Context, owner, repo, commi
 }
 
 func (s *Server) serveSelectionArchive(w http.ResponseWriter, r *http.Request, owner, repo string, sel selection, accessToken string) error {
-	artifact, err := s.prepareArtifact(r.Context(), owner, repo, sel, accessToken)
-	if err != nil {
-		return err
-	}
-
-	file, err := os.Open(artifact.Path)
+	archive, err := zipstream.NewVirtualArchive(sel.Manifest.Entries)
 	if err != nil {
 		return &apiError{
 			status:  http.StatusInternalServerError,
-			code:    "archive_open_failed",
-			message: "unable to open generated archive",
+			code:    "archive_layout_failed",
+			message: "unable to build virtual archive layout",
 			err:     err,
 		}
 	}
-	defer file.Close()
+
+	totalSize := archive.Size()
+	rangeStart, rangeEnd, partial, err := parseArchiveRange(r.Header.Get("Range"), totalSize)
+	if err != nil {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+		return &apiError{
+			status:  http.StatusRequestedRangeNotSatisfiable,
+			code:    "invalid_range",
+			message: "requested download range is invalid",
+			err:     err,
+		}
+	}
 
 	archiveName := sanitizeFilename(fmt.Sprintf("%s-%s.zip", repo, shortRef(sel.Commit)))
 	w.Header().Set("X-Zip-Total-Size", strconv.FormatInt(sel.Manifest.TotalBytes, 10))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Zip-Forger-Commit", sel.Commit)
 	w.Header().Set("X-Zip-Forger-Resume", "bytes")
-	w.Header().Set("ETag", `"`+artifact.Key+`"`)
-	http.ServeContent(w, r, archiveName, artifact.ModTime, file)
-	return nil
-}
+	etag := `"` + downloadArtifactKey(owner, repo, sel, accessToken) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Length", strconv.FormatInt(rangeEnd-rangeStart, 10))
+	if matchesIfNoneMatch(r.Header.Values("If-None-Match"), etag) && !partial {
+		w.WriteHeader(http.StatusNotModified)
+		return nil
+	}
 
-func (s *Server) prepareArtifact(ctx context.Context, owner, repo string, sel selection, accessToken string) (Artifact, error) {
-	if s.artifactStore == nil {
-		return Artifact{}, &apiError{
-			status:  http.StatusInternalServerError,
-			code:    "archive_store_unavailable",
-			message: "download archive store is unavailable",
+	statusCode := http.StatusOK
+	if partial {
+		statusCode = http.StatusPartialContent
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rangeStart, rangeEnd-1, totalSize))
+	}
+
+	rangeReader := zipstream.RangeOpenFunc(nil)
+	if reader, ok := s.source.(source.RangeReader); ok {
+		rangeReader = func(ctx context.Context, filePath string, start, end int64) (io.ReadCloser, error) {
+			return reader.OpenFileRange(source.WithAccessToken(ctx, accessToken), owner, repo, sel.Commit, filePath, start, end)
 		}
 	}
 
-	artifact, err := s.artifactStore.Ensure(ctx, downloadArtifactKey(owner, repo, sel, accessToken), func(ctx context.Context, w io.Writer) error {
-		return zipstream.Stream(ctx, w, sel.Manifest.Entries, func(ctx context.Context, filePath string) (io.ReadCloser, error) {
+	writer := &delayedStatusWriter{ResponseWriter: w, status: statusCode}
+	err = archive.StreamRange(
+		r.Context(),
+		writer,
+		rangeStart,
+		rangeEnd,
+		func(ctx context.Context, filePath string) (io.ReadCloser, error) {
 			return s.source.OpenFile(source.WithAccessToken(ctx, accessToken), owner, repo, sel.Commit, filePath)
-		}, &zipstream.Options{
-			OnFileError: func(path string, err error) error {
-				if errors.Is(err, source.ErrNotFound) {
-					s.logger.Printf("stream skip missing file owner=%s repo=%s commit=%s path=%s", owner, repo, sel.Commit, path)
-					return nil
-				}
-				return err
-			},
-		})
-	})
+		},
+		rangeReader,
+		func(ctx context.Context, entry source.Entry) (uint32, error) {
+			return s.resolveEntryCRC(ctx, owner, repo, sel.Commit, entry, accessToken)
+		},
+		func(entry source.Entry, crc uint32) {
+			s.storeEntryCRC(owner, repo, sel.Commit, entry, crc)
+		},
+	)
 	if err == nil {
-		return artifact, nil
+		writer.ensureStatus()
+		return nil
 	}
 	if errors.Is(err, source.ErrUnauthorized) {
-		return Artifact{}, &apiError{
+		return &apiError{
 			status:  http.StatusUnauthorized,
 			code:    "source_unauthorized",
 			message: "not authorized to read repository files",
@@ -628,17 +650,17 @@ func (s *Server) prepareArtifact(ctx context.Context, owner, repo string, sel se
 		}
 	}
 	if errors.Is(err, source.ErrNotFound) {
-		return Artifact{}, &apiError{
+		return &apiError{
 			status:  http.StatusNotFound,
 			code:    "not_found",
 			message: "requested resource was not found",
 			err:     err,
 		}
 	}
-	return Artifact{}, &apiError{
+	return &apiError{
 		status:  http.StatusBadGateway,
-		code:    "archive_build_failed",
-		message: "unable to create download archive",
+		code:    "archive_stream_failed",
+		message: "unable to stream download archive",
 		err:     err,
 	}
 }
@@ -825,6 +847,118 @@ func downloadArtifactKey(owner, repo string, sel selection, accessToken string) 
 	tokenHash := sha256.Sum256([]byte(accessToken))
 	sum := sha256.Sum256([]byte(selectionKey + ":" + hex.EncodeToString(tokenHash[:])))
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) resolveEntryCRC(ctx context.Context, owner, repo, commit string, entry source.Entry, accessToken string) (uint32, error) {
+	key := entryCRCKey(owner, repo, commit, entry)
+	return s.crcCache.Resolve(ctx, key, func(ctx context.Context) (uint32, error) {
+		reader, err := s.source.OpenFile(source.WithAccessToken(ctx, accessToken), owner, repo, commit, entry.Path)
+		if err != nil {
+			return 0, err
+		}
+		defer reader.Close()
+
+		hasher := crc32.NewIEEE()
+		buffer := make([]byte, 128*1024)
+		if _, err := io.CopyBuffer(hasher, reader, buffer); err != nil {
+			return 0, err
+		}
+		return hasher.Sum32(), nil
+	})
+}
+
+func (s *Server) storeEntryCRC(owner, repo, commit string, entry source.Entry, crc uint32) {
+	s.crcCache.Set(entryCRCKey(owner, repo, commit, entry), crc)
+}
+
+func entryCRCKey(owner, repo, commit string, entry source.Entry) string {
+	if strings.TrimSpace(entry.BlobSHA) != "" {
+		return "blob:" + entry.BlobSHA
+	}
+	return owner + "/" + repo + "@" + commit + ":" + entry.Path + ":" + strconv.FormatInt(entry.Size, 10)
+}
+
+func parseArchiveRange(header string, size int64) (int64, int64, bool, error) {
+	if size < 0 {
+		return 0, 0, false, errors.New("invalid archive size")
+	}
+	if strings.TrimSpace(header) == "" {
+		return 0, size, false, nil
+	}
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, false, errors.New("unsupported range unit")
+	}
+
+	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes="))
+	if spec == "" || strings.Contains(spec, ",") {
+		return 0, 0, false, errors.New("multiple ranges are not supported")
+	}
+
+	startPart, endPart, ok := strings.Cut(spec, "-")
+	if !ok {
+		return 0, 0, false, errors.New("malformed range")
+	}
+	startPart = strings.TrimSpace(startPart)
+	endPart = strings.TrimSpace(endPart)
+
+	if startPart == "" {
+		suffixLength, err := strconv.ParseInt(endPart, 10, 64)
+		if err != nil || suffixLength <= 0 {
+			return 0, 0, false, errors.New("invalid suffix range")
+		}
+		if suffixLength > size {
+			suffixLength = size
+		}
+		return size - suffixLength, size, true, nil
+	}
+
+	start, err := strconv.ParseInt(startPart, 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false, errors.New("range start out of bounds")
+	}
+	if endPart == "" {
+		return start, size, true, nil
+	}
+
+	endInclusive, err := strconv.ParseInt(endPart, 10, 64)
+	if err != nil || endInclusive < start {
+		return 0, 0, false, errors.New("invalid range end")
+	}
+	if endInclusive >= size {
+		endInclusive = size - 1
+	}
+	return start, endInclusive + 1, true, nil
+}
+
+func matchesIfNoneMatch(values []string, etag string) bool {
+	for _, value := range values {
+		for _, candidate := range strings.Split(value, ",") {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "*" || candidate == etag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type delayedStatusWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteStatus bool
+}
+
+func (w *delayedStatusWriter) Write(p []byte) (int, error) {
+	w.ensureStatus()
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *delayedStatusWriter) ensureStatus() {
+	if w.wroteStatus {
+		return
+	}
+	w.ResponseWriter.WriteHeader(w.status)
+	w.wroteStatus = true
 }
 
 func decodePreviewRequest(r *http.Request) (previewRequest, error) {

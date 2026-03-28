@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"strings"
 	"testing"
@@ -182,5 +184,147 @@ func TestStreamProducesValidZipWithNoDoubleClose(t *testing.T) {
 	body, _ := io.ReadAll(rc)
 	if string(body) != "hello world" {
 		t.Fatalf("unexpected content: %q", string(body))
+	}
+}
+
+func TestVirtualArchiveStreamsValidZip(t *testing.T) {
+	entries := []source.Entry{
+		{Path: "a.txt", Size: 5},
+		{Path: "nested/b.txt", Size: 4},
+	}
+	content := map[string]string{
+		"a.txt":        "alpha",
+		"nested/b.txt": "beta",
+	}
+
+	archive, err := NewVirtualArchive(entries)
+	if err != nil {
+		t.Fatalf("NewVirtualArchive failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = archive.StreamRange(
+		context.Background(),
+		&out,
+		0,
+		archive.Size(),
+		func(_ context.Context, filePath string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(content[filePath])), nil
+		},
+		nil,
+		func(_ context.Context, entry source.Entry) (uint32, error) {
+			return crc32.ChecksumIEEE([]byte(content[entry.Path])), nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("StreamRange failed: %v", err)
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatalf("zip.NewReader failed: %v", err)
+	}
+	if len(reader.File) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(reader.File))
+	}
+
+	for _, file := range reader.File {
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("Open(%s) failed: %v", file.Name, err)
+		}
+		body, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("ReadAll(%s) failed: %v", file.Name, err)
+		}
+		if got := string(body); got != content[file.Name] {
+			t.Fatalf("unexpected content for %s: %q", file.Name, got)
+		}
+	}
+}
+
+func TestVirtualArchiveRangeMatchesFullArchiveSlice(t *testing.T) {
+	entries := []source.Entry{
+		{Path: "docs/guide.txt", Size: 20},
+	}
+	content := "0123456789ABCDEFGHIJ"
+
+	archive, err := NewVirtualArchive(entries)
+	if err != nil {
+		t.Fatalf("NewVirtualArchive failed: %v", err)
+	}
+
+	var full bytes.Buffer
+	err = archive.StreamRange(
+		context.Background(),
+		&full,
+		0,
+		archive.Size(),
+		func(_ context.Context, filePath string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(content)), nil
+		},
+		nil,
+		func(_ context.Context, entry source.Entry) (uint32, error) {
+			return crc32.ChecksumIEEE([]byte(content)), nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("full StreamRange failed: %v", err)
+	}
+
+	dataStart := int64(30 + len(entries[0].Path))
+	rangeStart := dataStart + 7
+	rangeEnd := rangeStart + 5
+
+	var rangeCalls int
+	var partial bytes.Buffer
+	err = archive.StreamRange(
+		context.Background(),
+		&partial,
+		rangeStart,
+		rangeEnd,
+		func(_ context.Context, filePath string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(content)), nil
+		},
+		func(_ context.Context, filePath string, start, end int64) (io.ReadCloser, error) {
+			rangeCalls++
+			if start != 7 || end != 12 {
+				return nil, fmt.Errorf("unexpected source range %d-%d", start, end)
+			}
+			return io.NopCloser(strings.NewReader(content[start:end])), nil
+		},
+		func(_ context.Context, entry source.Entry) (uint32, error) {
+			return crc32.ChecksumIEEE([]byte(content)), nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("partial StreamRange failed: %v", err)
+	}
+
+	if rangeCalls != 1 {
+		t.Fatalf("expected one ranged open, got %d", rangeCalls)
+	}
+	if !bytes.Equal(partial.Bytes(), full.Bytes()[rangeStart:rangeEnd]) {
+		t.Fatalf("range bytes mismatch")
+	}
+}
+
+func TestVirtualArchiveUsesZip64ForLargeAggregateOffsets(t *testing.T) {
+	archive, err := NewVirtualArchive([]source.Entry{
+		{Path: "part-1.bin", Size: 3 << 30},
+		{Path: "part-2.bin", Size: 2 << 30},
+	})
+	if err != nil {
+		t.Fatalf("NewVirtualArchive failed: %v", err)
+	}
+	if !archive.zip64 {
+		t.Fatal("expected zip64 layout for archive larger than 4 GiB")
+	}
+	if archive.Size() <= 4<<30 {
+		t.Fatalf("expected archive size above 4 GiB, got %d", archive.Size())
 	}
 }

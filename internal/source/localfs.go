@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -130,6 +131,41 @@ func (s *LocalFS) OpenFile(_ context.Context, owner, repo, commit, filePath stri
 	return f, err
 }
 
+func (s *LocalFS) OpenFileRange(_ context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
+	base := filepath.Join(s.root, owner, repo, commit)
+	fullPath, err := safeJoin(base, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(fullPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if end >= 0 && end < start {
+		f.Close()
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	if end < 0 {
+		return f, nil
+	}
+	return readCloser{
+		Reader: io.LimitReader(f, end-start),
+		Closer: f,
+	}, nil
+}
+
 func (s *LocalFS) SearchRepos(_ context.Context, query string) ([]string, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
@@ -221,4 +257,9 @@ func safeJoin(base, relativePath string) (string, error) {
 		return "", errors.New("source: invalid path")
 	}
 	return target, nil
+}
+
+type readCloser struct {
+	io.Reader
+	io.Closer
 }

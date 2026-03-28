@@ -126,10 +126,14 @@ func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, cri
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
-	return s.openMediaReader(ctx, owner, repo, commit, filePath)
+	return s.openMediaReader(ctx, owner, repo, commit, filePath, -1, -1)
 }
 
-func (s *Forgejo) openMediaReader(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+func (s *Forgejo) OpenFileRange(ctx context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
+	return s.openMediaReader(ctx, owner, repo, commit, filePath, start, end)
+}
+
+func (s *Forgejo) openMediaReader(ctx context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
 	relativePath := normalizePath(filePath)
 	if relativePath == "" {
 		return nil, errors.New("source: file path is required")
@@ -146,7 +150,12 @@ func (s *Forgejo) openMediaReader(ctx context.Context, owner, repo, commit, file
 	)
 
 	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
-		return http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		applyRangeHeader(req, start, end)
+		return req, nil
 	})
 	if err != nil {
 		return nil, err
@@ -167,6 +176,27 @@ func (s *Forgejo) openMediaReader(ctx context.Context, owner, repo, commit, file
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		resp.Body.Close()
 		return nil, fmt.Errorf("source: forgejo media read failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if resp.StatusCode == http.StatusPartialContent || start < 0 {
+		return resp.Body, nil
+	}
+	if start <= 0 && end < 0 {
+		return resp.Body, nil
+	}
+	if start > 0 {
+		if _, err := io.CopyN(io.Discard, resp.Body, start); err != nil {
+			resp.Body.Close()
+			if errors.Is(err, io.EOF) {
+				return io.NopCloser(bytes.NewReader(nil)), nil
+			}
+			return nil, err
+		}
+	}
+	if end >= 0 {
+		return readCloser{
+			Reader: io.LimitReader(resp.Body, end-start),
+			Closer: resp.Body,
+		}, nil
 	}
 	return resp.Body, nil
 }
@@ -966,6 +996,21 @@ func escapePath(value string) string {
 		parts[i] = url.PathEscape(parts[i])
 	}
 	return strings.Join(parts, "/")
+}
+
+func applyRangeHeader(req *http.Request, start, end int64) {
+	if start < 0 && end < 0 {
+		return
+	}
+	if start < 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=-%d", end))
+		return
+	}
+	if end >= 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
+		return
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
 }
 
 func normalizePath(value string) string {

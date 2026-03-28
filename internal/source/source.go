@@ -13,8 +13,9 @@ var ErrUnauthorized = errors.New("source: unauthorized")
 var ErrUnsupportedSearchMode = errors.New("source: unsupported search mode")
 
 type Entry struct {
-	Path string
-	Size int64
+	Path    string
+	Size    int64
+	BlobSHA string
 }
 
 type RepositorySource interface {
@@ -30,4 +31,10 @@ type RepositorySource interface {
 
 type EntrySizeResolver interface {
 	ResolveEntrySizes(ctx context.Context, owner, repo, commit string, entries []Entry) ([]Entry, error)
+}
+
+type RangeReader interface {
+	// OpenFileRange opens a byte range [start, end) from a repository file.
+	// Pass end < 0 to read until EOF.
+	OpenFileRange(ctx context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error)
 }

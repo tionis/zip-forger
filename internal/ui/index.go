@@ -815,7 +815,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
           nodes.bytesValue.textContent = formatBytes(payload.totalBytes);
           nodes.treeView.textContent = (payload.entries || []).join("\n");
           nodes.downloadBtn.disabled = false;
-          setMessage("Ready.", "ok");
+          setMessage("Preview ready.", "ok");
           updateShareURL();
         } finally {
           stopProgressTracking();

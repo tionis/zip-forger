@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -323,7 +324,7 @@ func TestDownloadReturnsAPIErrorWhenArchiveBuildFails(t *testing.T) {
 	if resp.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d body=%s", resp.Code, resp.Body.String())
 	}
-	if got := apiErrorCode(t, resp.Body.Bytes()); got != "archive_build_failed" {
+	if got := apiErrorCode(t, resp.Body.Bytes()); got != "archive_stream_failed" {
 		t.Fatalf("unexpected error code %q", got)
 	}
 }
@@ -367,6 +368,58 @@ func TestDownloadSupportsRangeRequests(t *testing.T) {
 	}
 	if !bytes.Equal(rangeResp.Body.Bytes(), fullBody[10:40]) {
 		t.Fatalf("range body mismatch")
+	}
+}
+
+func TestDownloadRangeUsesSourceRangeReader(t *testing.T) {
+	content := "0123456789ABCDEFGHIJ"
+	entry := source.Entry{Path: "docs/guide.txt", Size: int64(len(content))}
+
+	var rangeCalls int
+	server := NewServer(Dependencies{
+		Source: &stubSource{
+			resolveRef: func(_ context.Context, owner, repo, ref string) (string, error) {
+				return "commit-123", nil
+			},
+			readFile: func(_ context.Context, owner, repo, commit, filePath string) ([]byte, error) {
+				return nil, source.ErrNotFound
+			},
+			listFiles: func(_ context.Context, owner, repo, commit string, criteria filter.Criteria) ([]source.Entry, error) {
+				return []source.Entry{entry}, nil
+			},
+			openFile: func(_ context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader(content)), nil
+			},
+			openFileRange: func(_ context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
+				rangeCalls++
+				if start != 5 || end != 10 {
+					t.Fatalf("unexpected file range %d-%d", start, end)
+				}
+				return io.NopCloser(strings.NewReader(content[start:end])), nil
+			},
+		},
+		ManifestCache: cache.NewManifestCache(time.Minute, 128),
+		ArtifactStore: NewArtifactStore(t.TempDir()),
+		Logger:        log.New(io.Discard, "", 0),
+	})
+	handler := server.Handler()
+
+	rangeStart := int64(len(buildTestLocalHeader(entry.Path))) + 5
+	rangeEnd := rangeStart + 5
+
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/repos/acme/rules/download.zip?ref=main", nil)
+	rangeReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd-1))
+	rangeResp := httptest.NewRecorder()
+	handler.ServeHTTP(rangeResp, rangeReq)
+
+	if rangeResp.Code != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d body=%s", rangeResp.Code, rangeResp.Body.String())
+	}
+	if rangeCalls != 1 {
+		t.Fatalf("expected one ranged file read, got %d", rangeCalls)
+	}
+	if got := rangeResp.Body.String(); got != content[5:10] {
+		t.Fatalf("unexpected ranged body %q", got)
 	}
 }
 
@@ -547,7 +600,6 @@ func TestPreviewUsesResolvedEntrySizes(t *testing.T) {
 		ArtifactStore: NewArtifactStore(t.TempDir()),
 		Logger:        log.New(io.Discard, "", 0),
 	})
-
 	req := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main"}`))
 	resp := httptest.NewRecorder()
 	server.Handler().ServeHTTP(resp, req)
@@ -659,11 +711,12 @@ func readSSEDataLine(t *testing.T, reader *bufio.Reader) string {
 }
 
 type stubSource struct {
-	resolveRef   func(context.Context, string, string, string) (string, error)
-	readFile     func(context.Context, string, string, string, string) ([]byte, error)
-	listFiles    func(context.Context, string, string, string, filter.Criteria) ([]source.Entry, error)
-	openFile     func(context.Context, string, string, string, string) (io.ReadCloser, error)
-	resolveSizes func(context.Context, string, string, string, []source.Entry) ([]source.Entry, error)
+	resolveRef    func(context.Context, string, string, string) (string, error)
+	readFile      func(context.Context, string, string, string, string) ([]byte, error)
+	listFiles     func(context.Context, string, string, string, filter.Criteria) ([]source.Entry, error)
+	openFile      func(context.Context, string, string, string, string) (io.ReadCloser, error)
+	openFileRange func(context.Context, string, string, string, string, int64, int64) (io.ReadCloser, error)
+	resolveSizes  func(context.Context, string, string, string, []source.Entry) ([]source.Entry, error)
 }
 
 func (s *stubSource) ResolveRef(ctx context.Context, owner, repo, ref string) (string, error) {
@@ -694,6 +747,32 @@ func (s *stubSource) OpenFile(ctx context.Context, owner, repo, commit, filePath
 	return nil, source.ErrNotFound
 }
 
+func (s *stubSource) OpenFileRange(ctx context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
+	if s.openFileRange != nil {
+		return s.openFileRange(ctx, owner, repo, commit, filePath, start, end)
+	}
+	if s.openFile == nil {
+		return nil, source.ErrNotFound
+	}
+	reader, err := s.openFile(ctx, owner, repo, commit, filePath)
+	if err != nil {
+		return nil, err
+	}
+	if start > 0 {
+		if _, err := io.CopyN(io.Discard, reader, start); err != nil {
+			reader.Close()
+			return nil, err
+		}
+	}
+	if end >= 0 {
+		return testReadCloser{
+			Reader: io.LimitReader(reader, end-start),
+			Closer: reader,
+		}, nil
+	}
+	return reader, nil
+}
+
 func (s *stubSource) ResolveEntrySizes(ctx context.Context, owner, repo, commit string, entries []source.Entry) ([]source.Entry, error) {
 	if s.resolveSizes != nil {
 		return s.resolveSizes(ctx, owner, repo, commit, entries)
@@ -701,6 +780,17 @@ func (s *stubSource) ResolveEntrySizes(ctx context.Context, owner, repo, commit 
 	out := make([]source.Entry, len(entries))
 	copy(out, entries)
 	return out, nil
+}
+
+func buildTestLocalHeader(name string) []byte {
+	header := make([]byte, 30+len(name))
+	copy(header[30:], name)
+	return header
+}
+
+type testReadCloser struct {
+	io.Reader
+	io.Closer
 }
 
 func (s *stubSource) SearchRepos(context.Context, string) ([]string, error) {

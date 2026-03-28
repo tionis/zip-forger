@@ -127,7 +127,7 @@ func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entr
 		JOIN tree_entries ON tree_entries.parent_tree_sha = walk.sha
 		WHERE walk.type = 'tree'
 	)
-	SELECT full_path, size FROM walk WHERE type = 'blob'
+	SELECT full_path, size, sha FROM walk WHERE type = 'blob'
 	`
 	// Actually, the logic above is what I had. Let's look closer.
 	// If parent_tree_sha = root, and it has a child 'rules' (type=tree, sha=rules-sha).
@@ -137,20 +137,20 @@ func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entr
 	// If 'rules-sha' has child 'core' (type=tree, sha=core-sha)
 	// Row 2: full_path='rules' || '/' || 'core' = 'rules/core'
 	// This actually looks CORRECT.
-	
+
 	// Wait! I found the real bug. In forgejo.go, I am saving entries like this:
 	// entriesToSave = append(entriesToSave, struct{Path: name, ...}{Path: name, ...})
 	// Where 'name' is path.Base(normalizePath(node.Path)).
-	
+
 	// But what if node.Type == "tree"?
 	// I spawn a task: spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
 	// And listFilesByTrees uses task.sha to fetch.
-	
+
 	// I see it! In Forgejo.go:
 	// _ = s.db.SaveEntries(ctx, task.sha, entriesToSave)
 	// I am saving the entries using their OWN sha as the parent_tree_sha?
 	// No, task.sha IS the parent tree sha. This is correct.
-	
+
 	// Let's re-verify the Search method in tree_db.go.
 	rows, err := c.db.QueryContext(ctx, query, rootSHA)
 	if err != nil {
@@ -161,7 +161,7 @@ func (c *TreeDB) GetFullTree(ctx context.Context, rootSHA string) ([]source.Entr
 	var entries []source.Entry
 	for rows.Next() {
 		var e source.Entry
-		if err := rows.Scan(&e.Path, &e.Size); err != nil {
+		if err := rows.Scan(&e.Path, &e.Size, &e.BlobSHA); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)
@@ -182,7 +182,7 @@ func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Cri
 		JOIN tree_entries ON tree_entries.parent_tree_sha = walk.sha
 		WHERE walk.type = 'tree'
 	)
-	SELECT full_path, size FROM walk WHERE type = 'blob'`
+	SELECT full_path, size, sha FROM walk WHERE type = 'blob'`
 
 	// Normalize criteria
 	prefixes := []string{}
@@ -236,7 +236,7 @@ func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Cri
 	var entries []source.Entry
 	for rows.Next() {
 		var e source.Entry
-		if err := rows.Scan(&e.Path, &e.Size); err != nil {
+		if err := rows.Scan(&e.Path, &e.Size, &e.BlobSHA); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)

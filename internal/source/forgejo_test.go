@@ -503,6 +503,46 @@ func TestForgejoOpenFileUsesMediaEndpoint(t *testing.T) {
 	}
 }
 
+func TestForgejoOpenFileRangeUsesMediaRangeRequest(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
+					return response(http.StatusUnauthorized, "missing token"), nil
+				}
+				if got := r.Header.Get("Range"); got != "bytes=5-9" {
+					return response(http.StatusBadRequest, "unexpected range "+got), nil
+				}
+
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/media/assets/book.pdf" && r.URL.Query().Get("ref") == "main":
+					return response(http.StatusPartialContent, "56789"), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	reader, err := client.OpenFileRange(ctx, "acme", "rules", "main", "assets/book.pdf", 5, 10)
+	if err != nil {
+		t.Fatalf("OpenFileRange failed: %v", err)
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "56789" {
+		t.Fatalf("unexpected ranged media content: %q", string(body))
+	}
+}
+
 func TestForgejoOpenFileMediaFallsBackToTokenAuthForLegacyServers(t *testing.T) {
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
