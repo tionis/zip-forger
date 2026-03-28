@@ -13,8 +13,6 @@ import (
 
 func TestOAuthLoginCallbackFlow(t *testing.T) {
 	manager, err := NewManager(Config{
-		Enabled:        true,
-		Required:       true,
 		ForgejoBaseURL: "http://forgejo.local",
 		ClientID:       "client-id",
 		ClientSecret:   "client-secret",
@@ -32,6 +30,9 @@ func TestOAuthLoginCallbackFlow(t *testing.T) {
 			}
 			if r.Method != http.MethodPost {
 				return responseJSON(http.StatusMethodNotAllowed, `{"error":"method_not_allowed"}`), nil
+			}
+			if body, _ := io.ReadAll(r.Body); !strings.Contains(string(body), "redirect_uri="+url.QueryEscape("http://example.local/auth/callback")) {
+				t.Fatalf("oauth exchange used unexpected redirect uri payload %q", string(body))
 			}
 			return responseJSON(http.StatusOK, `{"access_token":"token-xyz","token_type":"token","expires_in":3600}`), nil
 		}),
@@ -80,11 +81,76 @@ func TestOAuthLoginCallbackFlow(t *testing.T) {
 	}
 }
 
+func TestOAuthLoginDerivesRedirectURLFromForwardedHeaders(t *testing.T) {
+	var exchangedRedirect string
+	manager, err := NewManager(Config{
+		ForgejoBaseURL: "http://forgejo.local",
+		ClientID:       "client-id",
+		ClientSecret:   "client-secret",
+		SessionSecret:  "session-secret",
+		CookieSecure:   false,
+	}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+	manager.client = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(r.Body)
+			values, err := url.ParseQuery(string(body))
+			if err != nil {
+				t.Fatalf("ParseQuery failed: %v", err)
+			}
+			exchangedRedirect = values.Get("redirect_uri")
+			return responseJSON(http.StatusOK, `{"access_token":"token-xyz","token_type":"token","expires_in":3600}`), nil
+		}),
+	}
+
+	mux := http.NewServeMux()
+	manager.RegisterRoutes(mux)
+
+	loginReq := httptest.NewRequest(http.MethodGet, "http://internal.local/auth/login?return_to=/", nil)
+	loginReq.Header.Set("X-Forwarded-Proto", "https")
+	loginReq.Header.Set("X-Forwarded-Host", "zip-forger.example.org")
+	loginResp := httptest.NewRecorder()
+	mux.ServeHTTP(loginResp, loginReq)
+
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("login status=%d body=%s", loginResp.Code, loginResp.Body.String())
+	}
+
+	location := loginResp.Header().Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("url.Parse failed: %v", err)
+	}
+	expectedRedirect := "https://zip-forger.example.org/auth/callback"
+	if got := redirectURL.Query().Get("redirect_uri"); got != expectedRedirect {
+		t.Fatalf("unexpected derived redirect uri: %q", got)
+	}
+
+	state := redirectURL.Query().Get("state")
+	callbackReq := httptest.NewRequest(http.MethodGet, "http://internal.local/auth/callback?code=abc&state="+url.QueryEscape(state), nil)
+	callbackReq.Header.Set("X-Forwarded-Proto", "https")
+	callbackReq.Header.Set("X-Forwarded-Host", "zip-forger.example.org")
+	callbackResp := httptest.NewRecorder()
+	mux.ServeHTTP(callbackResp, callbackReq)
+
+	if callbackResp.Code != http.StatusFound {
+		t.Fatalf("callback status=%d body=%s", callbackResp.Code, callbackResp.Body.String())
+	}
+	if exchangedRedirect != expectedRedirect {
+		t.Fatalf("oauth exchange used redirect uri %q, want %q", exchangedRedirect, expectedRedirect)
+	}
+}
+
 func TestMiddlewareRequiredBearerToken(t *testing.T) {
 	manager, err := NewManager(Config{
-		Enabled:       false,
-		Required:      true,
-		SessionSecret: "session-secret",
+		ForgejoBaseURL: "http://forgejo.local",
+		ClientID:       "client-id",
+		ClientSecret:   "client-secret",
+		RedirectURL:    "http://example.local/auth/callback",
+		SessionSecret:  "session-secret",
+		CookieSecure:   false,
 	}, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)

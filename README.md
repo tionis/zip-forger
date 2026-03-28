@@ -1,12 +1,22 @@
 # zip-forger
 
-`zip-forger` streams ZIP downloads from a Forgejo repository based on presets and
-filters defined in `.zip-forger.yaml`.
+`zip-forger` is a web UI and API for downloading filtered subsets of a
+repository as a ZIP archive based on presets and filters defined in
+`.zip-forger.yaml`.
+
+The ZIP is virtual. `zip-forger` does not prebuild a local archive file before
+serving it. Instead it computes the ZIP structure on demand and streams entry
+bytes directly from the source repository. In Forgejo mode that means download
+traffic is proxied from the Forgejo server, including resumed byte-range
+requests.
+
+The service is otherwise stateless. It only keeps a local cache database for
+tree metadata, manifests, and CRC reuse so repeated previews and downloads are
+faster.
 
 Current stage:
 
-- Local test mode (`ZIP_FORGER_SOURCE=local`)
-- Forgejo API mode (`ZIP_FORGER_SOURCE=forgejo`)
+- Forgejo API mode
 - Web UI at `/`
 - UI theme switch (`system`, `light`, `dark`)
 - Searchable owner/repository/branch inputs
@@ -14,15 +24,131 @@ Current stage:
 - Preview tree view with selected files
 - Shareable direct download URL copy action
 - Preview and config APIs
-- ZIP download endpoint with resumable byte ranges
+- Virtual ZIP download endpoint with resumable byte ranges
 - Private direct download URLs backed by encrypted access tokens
 - Forgejo OAuth login routes (optional)
 
-## Quick Start (Local Mode)
+## Self-Hosting
+
+`zip-forger` only needs three runtime concerns:
+
+- a place to listen for HTTP traffic
+- a writable cache directory for the tree database and CRC cache
+- access to a Forgejo instance
+
+The included [Containerfile](/home/eric/zip-forger/Containerfile) defaults to:
+
+- `ZIP_FORGER_ADDR=:8080`
+- `ZIP_FORGER_CACHE_DIR=/var/lib/zip-forger/cache`
+
+Persist `/var/lib/zip-forger/cache`.
+
+That cache is only for performance. It is safe to delete, and the service does
+not depend on any durable application database beyond it.
+
+### Container Image
+
+Replace `podman` with `docker` if that is what you run in production.
+
+Build locally:
+
+```bash
+podman build -t zip-forger -f Containerfile .
+```
+
+Use the published image from this repository:
+
+```bash
+podman pull ghcr.io/tionis/zip-forger:latest
+```
+
+Run Forgejo OAuth mode:
+
+```bash
+podman run --rm \
+  -p 8080:8080 \
+  -e ZIP_FORGER_FORGEJO_BASE_URL='https://forgejo.example.org' \
+  -e ZIP_FORGER_OAUTH_CLIENT_ID='replace-me' \
+  -e ZIP_FORGER_OAUTH_CLIENT_SECRET='replace-me' \
+  -e ZIP_FORGER_SESSION_SECRET='replace-with-32-random-bytes-or-more' \
+  -v zip-forger-cache:/var/lib/zip-forger/cache \
+  zip-forger
+```
+
+The GitHub container workflow publishes `ghcr.io/tionis/zip-forger` for this
+repository. Forks will publish to `ghcr.io/<owner>/zip-forger`.
+
+### Binary Deployment
+
+You can also run the service directly:
+
+```bash
+go build -o ./bin/zip-forger ./cmd/zip-forger
+./bin/zip-forger
+```
+
+For a systemd-style deployment, set the same environment variables described
+below and ensure the service user can write `ZIP_FORGER_CACHE_DIR`.
+
+### Required Configuration
+
+Common variables:
+
+- `ZIP_FORGER_ADDR` HTTP bind address, default `:8080`
+- `ZIP_FORGER_CACHE_DIR` writable cache path, default `./.cache/zip-forger`
+
+- `ZIP_FORGER_FORGEJO_BASE_URL` base URL of the Forgejo instance
+
+Forgejo OAuth mode additionally requires:
+
+- `ZIP_FORGER_OAUTH_CLIENT_ID`
+- `ZIP_FORGER_OAUTH_CLIENT_SECRET`
+- `ZIP_FORGER_SESSION_SECRET`
+
+Recommended optional settings:
+
+- `ZIP_FORGER_OAUTH_REDIRECT_URL` explicit OAuth callback URL override
+- `ZIP_FORGER_DOWNLOAD_URL_TTL` private URL lifetime, default `24h`
+- `ZIP_FORGER_OAUTH_SCOPES` comma-separated scope list, default `write:repository`
+- `ZIP_FORGER_SESSION_COOKIE_NAME` cookie name override
+- `ZIP_FORGER_SESSION_COOKIE_SECURE` set to `false` only for plain HTTP development
+
+### Reverse Proxy Notes
+
+- Run the public service behind HTTPS if you use OAuth or private download URLs.
+- If `ZIP_FORGER_OAUTH_REDIRECT_URL` is unset, `zip-forger` derives the callback URL from `Forwarded`, `X-Forwarded-Proto`, `X-Forwarded-Host`, and `Host` headers in that order. Make sure your reverse proxy sets those headers correctly.
+- Set `ZIP_FORGER_OAUTH_REDIRECT_URL` when you want a fixed callback URL independent of proxy headers, for example `https://zip-forger.example.org/auth/callback`.
+- Keep `ZIP_FORGER_SESSION_COOKIE_SECURE=true` in production.
+- Private download URLs and session cookies both derive from `ZIP_FORGER_SESSION_SECRET`. Use a stable production secret so both sessions and private links survive restarts.
+- `zip-forger` does not need privileged Forgejo access. It uses the signed-in user's own OAuth access token for repository API, media, and LFS requests.
+- `WriteTimeout` is intentionally disabled by the server because downloads are
+  long-running virtual ZIP streams.
+
+### GitHub Automation
+
+The repository now ships two GitHub Actions workflows:
+
+- [container.yml](/home/eric/zip-forger/.github/workflows/container.yml) runs on pull requests, `main`, and `v*` tags. It tests the project and publishes a multi-arch GHCR image on non-PR runs.
+- [release.yml](/home/eric/zip-forger/.github/workflows/release.yml) runs on `v*` tags and creates a GitHub Release with Linux `amd64` and `arm64` tarballs plus checksums.
+
+The intended release flow is:
+
+1. Create and push a version tag such as `v1.2.3`.
+2. The container workflow publishes the matching image tags to GHCR.
+3. The release workflow creates the GitHub Release and uploads the binary archives.
+
+You can also rerun the release packaging manually with `workflow_dispatch` by
+providing an existing tag.
+
+## Quick Start
 
 1. Run the server:
 
 ```bash
+ZIP_FORGER_FORGEJO_BASE_URL='https://forgejo.example.org' \
+ZIP_FORGER_OAUTH_CLIENT_ID='replace-me' \
+ZIP_FORGER_OAUTH_CLIENT_SECRET='replace-me' \
+ZIP_FORGER_SESSION_SECRET='replace-with-32-random-bytes-or-more' \
 go run ./cmd/zip-forger
 ```
 
@@ -31,8 +157,9 @@ go run ./cmd/zip-forger
 ```bash
 curl -sS \
   -X POST \
-  http://localhost:8080/api/repos/acme/rules/preview \
+  http://localhost:8080/api/repos/<owner>/<repo>/preview \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <forgejo_token>' \
   -d '{"ref":"main","preset":"core-pdfs"}' | jq
 ```
 
@@ -40,71 +167,33 @@ curl -sS \
 
 ```bash
 curl -fL \
-  'http://localhost:8080/api/repos/acme/rules/download.zip?ref=main&preset=core-pdfs' \
+  'http://localhost:8080/api/repos/<owner>/<repo>/download.zip?ref=main&preset=core-pdfs' \
+  -H 'Authorization: Bearer <forgejo_token>' \
   -o /tmp/rules.zip
 ```
 
 4. Inspect config resolution:
 
 ```bash
-curl -sS 'http://localhost:8080/api/repos/acme/rules/config?ref=main' | jq
+curl -sS \
+  'http://localhost:8080/api/repos/<owner>/<repo>/config?ref=main' \
+  -H 'Authorization: Bearer <forgejo_token>' | jq
 ```
-
-The repository root defaults to `./mock-repos`, and this project already ships
-with a sample repo under that path.
 
 Open `http://localhost:8080/` to use the built-in UI.
-
-## Forgejo Mode (PAT/Bearer Header)
-
-This is the simplest way to test against a real Forgejo instance without OAuth UI setup.
-
-1. Start server:
-
-```bash
-ZIP_FORGER_SOURCE=forgejo \
-ZIP_FORGER_FORGEJO_BASE_URL='https://forgejo.example.org' \
-ZIP_FORGER_AUTH_MODE=none \
-ZIP_FORGER_AUTH_REQUIRED=true \
-go run ./cmd/zip-forger
-```
-
-2. Call preview with a Forgejo token:
-
-```bash
-curl -sS \
-  -X POST \
-  "http://localhost:8080/api/repos/<owner>/<repo>/preview" \
-  -H "Authorization: Bearer <forgejo_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"ref":"main","preset":"core-pdfs"}' | jq
-```
-
-3. Download with the same token:
-
-```bash
-curl -fL \
-  "http://localhost:8080/api/repos/<owner>/<repo>/download.zip?ref=main&preset=core-pdfs" \
-  -H "Authorization: Bearer <forgejo_token>" \
-  -o /tmp/repo.zip
-```
 
 ## Forgejo OAuth Mode
 
 Set these environment variables:
 
-- `ZIP_FORGER_SOURCE=forgejo`
 - `ZIP_FORGER_FORGEJO_BASE_URL`
-- `ZIP_FORGER_AUTH_MODE=forgejo-oauth`
 - `ZIP_FORGER_OAUTH_CLIENT_ID`
 - `ZIP_FORGER_OAUTH_CLIENT_SECRET`
-- `ZIP_FORGER_OAUTH_REDIRECT_URL` (must match Forgejo OAuth app config)
 - `ZIP_FORGER_SESSION_SECRET`
 
 Optional:
 
-- `ZIP_FORGER_AUTH_REQUIRED` (defaults to `true` for Forgejo source)
-- `ZIP_FORGER_DOWNLOAD_URL_SECRET` (falls back to `ZIP_FORGER_SESSION_SECRET`, otherwise an ephemeral startup secret is generated)
+- `ZIP_FORGER_OAUTH_REDIRECT_URL` (explicit callback URL override; otherwise derived from forwarded host/proto headers)
 - `ZIP_FORGER_DOWNLOAD_URL_TTL` (defaults to `24h`)
 - `ZIP_FORGER_OAUTH_SCOPES` (comma-separated)
 - `ZIP_FORGER_SESSION_COOKIE_NAME`
@@ -117,16 +206,24 @@ OAuth endpoints:
 - `POST /auth/logout`
 - `GET /auth/me`
 
+`zip-forger` does not use any instance-wide Forgejo admin token. The server
+operates with the access token obtained for the current user via OAuth, and
+programmatic clients can also supply their own Forgejo token directly.
+
+Programmatic clients can still authenticate requests with
+`Authorization: Bearer <forgejo_token>` when they already have a Forgejo token.
+That is an alternate credential source, not a separate deployment mode.
+
 ## API Surface (Current)
 
 - `GET /healthz`
-- `GET /api/owners`
-- `GET /api/owners/{owner}/repos`
+- `GET /api/repos/search?q=...`
 - `GET /api/repos/{owner}/{repo}/branches`
 - `GET /api/repos/{owner}/{repo}/config?ref=...`
 - `PUT /api/repos/{owner}/{repo}/config`
 - `POST /api/repos/{owner}/{repo}/preview`
 - `GET /api/repos/{owner}/{repo}/download.zip?ref=...&preset=...`
+- `GET /api/downloads/private.zip?token=...`
 
 Query filters for `download.zip`:
 
@@ -137,8 +234,17 @@ Query filters for `download.zip`:
 
 ## Notes
 
-- ZIP output is generated into the local cache before it is served.
-- `Range` byte resume is supported for completed archives.
+- ZIP downloads are served as a virtual archive. The server computes ZIP headers,
+  central directory records, and byte offsets on demand instead of materializing
+  a temporary `.zip` file first.
+- The service is stateless apart from its local cache database. That cache only
+  exists to avoid repeating expensive repository-tree and CRC work.
+- Resume support works against that virtual archive. `Range` requests against the
+  ZIP are translated into the corresponding archive sections, and file payload
+  ranges are streamed from the source repository where possible.
 - Preview responses include a direct download URL; when a server secret is configured, authenticated previews return a private URL with an encrypted embedded access token.
+- In Forgejo mode, file bytes are streamed from the Forgejo `/media/{filepath}`
+  endpoint, and resumed archive reads forward byte ranges upstream instead of
+  downloading full files into a local archive cache.
 - Forgejo source mode detects Git LFS pointer files and resolves them through the LFS batch download flow.
 - Recursive tree listing falls back to Forgejo contents walk if tree responses are truncated.

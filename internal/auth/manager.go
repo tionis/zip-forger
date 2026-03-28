@@ -19,8 +19,6 @@ import (
 )
 
 type Config struct {
-	Enabled        bool
-	Required       bool
 	ForgejoBaseURL string
 	ClientID       string
 	ClientSecret   string
@@ -46,6 +44,7 @@ type Manager struct {
 type oauthState struct {
 	expiresAt time.Time
 	returnTo  string
+	redirectTo string
 }
 
 func NewManager(cfg Config, logger *log.Logger) (*Manager, error) {
@@ -74,22 +73,15 @@ func NewManager(cfg Config, logger *log.Logger) (*Manager, error) {
 		states: make(map[string]oauthState),
 	}
 
-	if !cfg.Enabled {
-		return manager, nil
-	}
-
 	cfg.ForgejoBaseURL = strings.TrimSuffix(strings.TrimSpace(cfg.ForgejoBaseURL), "/")
 	if cfg.ForgejoBaseURL == "" {
-		return nil, errors.New("auth: forgejo base URL is required when auth is enabled")
+		return nil, errors.New("auth: forgejo base URL is required")
 	}
 	if strings.TrimSpace(cfg.ClientID) == "" {
-		return nil, errors.New("auth: client ID is required when auth is enabled")
+		return nil, errors.New("auth: client ID is required")
 	}
 	if strings.TrimSpace(cfg.ClientSecret) == "" {
-		return nil, errors.New("auth: client secret is required when auth is enabled")
-	}
-	if strings.TrimSpace(cfg.RedirectURL) == "" {
-		return nil, errors.New("auth: redirect URL is required when auth is enabled")
+		return nil, errors.New("auth: client secret is required")
 	}
 
 	codec, err := NewSessionCodec(cfg.SessionSecret)
@@ -102,16 +94,8 @@ func NewManager(cfg Config, logger *log.Logger) (*Manager, error) {
 	return manager, nil
 }
 
-func (m *Manager) Enabled() bool {
-	return m != nil && m.cfg.Enabled
-}
-
-func (m *Manager) Required() bool {
-	return m != nil && m.cfg.Required
-}
-
 func (m *Manager) RegisterRoutes(mux *http.ServeMux) {
-	if m == nil || !m.cfg.Enabled {
+	if m == nil {
 		return
 	}
 	mux.HandleFunc("GET /auth/login", m.handleLogin)
@@ -127,21 +111,13 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, _, _, err := m.extractToken(r)
 		if err != nil {
-			if m.cfg.Required {
-				writeAuthError(w, http.StatusUnauthorized, "authentication_failed", "invalid authentication session")
-				return
-			}
 			m.clearSessionCookie(w)
-			next.ServeHTTP(w, r)
+			writeAuthError(w, http.StatusUnauthorized, "authentication_failed", "invalid authentication session")
 			return
 		}
 
 		if token == "" {
-			if m.cfg.Required {
-				writeAuthError(w, http.StatusUnauthorized, "authentication_required", "authentication required")
-				return
-			}
-			next.ServeHTTP(w, r)
+			writeAuthError(w, http.StatusUnauthorized, "authentication_required", "authentication required")
 			return
 		}
 
@@ -156,23 +132,29 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "state_generation_failed", "unable to start login flow")
 		return
 	}
+	redirectURL, err := m.resolveRedirectURL(r)
+	if err != nil {
+		writeAuthError(w, http.StatusBadRequest, "invalid_redirect_url", "unable to determine oauth redirect url")
+		return
+	}
 
 	returnTo := sanitizeReturnTo(r.URL.Query().Get("return_to"))
 	m.storeState(state, oauthState{
-		expiresAt: time.Now().Add(m.cfg.StateTTL),
-		returnTo:  returnTo,
+		expiresAt:  time.Now().Add(m.cfg.StateTTL),
+		returnTo:   returnTo,
+		redirectTo: redirectURL,
 	})
 
 	query := url.Values{}
 	query.Set("response_type", "code")
 	query.Set("client_id", m.cfg.ClientID)
-	query.Set("redirect_uri", m.cfg.RedirectURL)
+	query.Set("redirect_uri", redirectURL)
 	query.Set("state", state)
 	query.Set("scope", strings.Join(m.cfg.Scopes, " "))
 
-	redirectURL := m.cfg.ForgejoBaseURL + "/login/oauth/authorize?" + query.Encode()
-	m.logger.Printf("auth: redirecting to %s", redirectURL)
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	authorizeURL := m.cfg.ForgejoBaseURL + "/login/oauth/authorize?" + query.Encode()
+	m.logger.Printf("auth: redirecting to %s", authorizeURL)
+	http.Redirect(w, r, authorizeURL, http.StatusFound)
 }
 
 func (m *Manager) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -188,8 +170,17 @@ func (m *Manager) handleCallback(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "invalid_state", "state is invalid or expired")
 		return
 	}
+	redirectURL := storedState.redirectTo
+	var err error
+	if strings.TrimSpace(redirectURL) == "" {
+		redirectURL, err = m.resolveRedirectURL(r)
+		if err != nil {
+			writeAuthError(w, http.StatusBadRequest, "invalid_redirect_url", "unable to determine oauth redirect url")
+			return
+		}
+	}
 
-	token, tokenType, tokenScope, expiresAt, err := m.exchangeCode(r.Context(), code)
+	token, tokenType, tokenScope, expiresAt, err := m.exchangeCode(r.Context(), code, redirectURL)
 	if err != nil {
 		m.logger.Printf("auth callback exchange failed: %v", err)
 		writeAuthError(w, http.StatusBadGateway, "token_exchange_failed", "unable to exchange oauth code")
@@ -278,12 +269,12 @@ func (m *Manager) extractToken(r *http.Request) (token, scope, sourceName string
 	return session.AccessToken, session.Scope, "session_cookie", nil
 }
 
-func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, tokenType, scope string, expiresAt time.Time, err error) {
+func (m *Manager) exchangeCode(ctx context.Context, code, redirectURL string) (accessToken, tokenType, scope string, expiresAt time.Time, err error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("client_id", m.cfg.ClientID)
 	form.Set("client_secret", m.cfg.ClientSecret)
-	form.Set("redirect_uri", m.cfg.RedirectURL)
+	form.Set("redirect_uri", redirectURL)
 	form.Set("code", code)
 
 	endpoint := m.cfg.ForgejoBaseURL + "/login/oauth/access_token"
@@ -422,6 +413,76 @@ func sanitizeReturnTo(value string) string {
 		return "/"
 	}
 	return value
+}
+
+func (m *Manager) resolveRedirectURL(r *http.Request) (string, error) {
+	if explicit := strings.TrimSpace(m.cfg.RedirectURL); explicit != "" {
+		return explicit, nil
+	}
+	if r == nil {
+		return "", errors.New("auth: request is required to derive redirect url")
+	}
+
+	scheme, host := forwardedOrigin(r)
+	if host == "" {
+		return "", errors.New("auth: request host is empty")
+	}
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+
+	return scheme + "://" + host + "/auth/callback", nil
+}
+
+func forwardedOrigin(r *http.Request) (scheme, host string) {
+	if r == nil {
+		return "", ""
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("Forwarded")); forwarded != "" {
+		first := strings.Split(forwarded, ",")[0]
+		for _, part := range strings.Split(first, ";") {
+			piece := strings.TrimSpace(part)
+			key, value, ok := strings.Cut(piece, "=")
+			if !ok {
+				continue
+			}
+			key = strings.ToLower(strings.TrimSpace(key))
+			value = strings.Trim(strings.TrimSpace(value), `"`)
+			switch key {
+			case "proto":
+				if scheme == "" {
+					scheme = value
+				}
+			case "host":
+				if host == "" {
+					host = value
+				}
+			}
+		}
+	}
+
+	if scheme == "" {
+		scheme = firstForwardedValue(r.Header.Get("X-Forwarded-Proto"))
+	}
+	if host == "" {
+		host = firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
+	}
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	return scheme, host
+}
+
+func firstForwardedValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }
 
 func randomToken(numBytes int) (string, error) {

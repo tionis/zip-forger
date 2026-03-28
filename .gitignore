@@ -1,2 +1,4 @@
-.env
-zip-forger
+/.env
+/zip-forger
+/.cache
+*.swp

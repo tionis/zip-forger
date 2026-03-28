@@ -52,9 +52,10 @@ type Server struct {
 }
 
 type previewRequest struct {
-	Ref    string          `json:"ref"`
-	Preset string          `json:"preset"`
-	Adhoc  filter.Criteria `json:"adhoc"`
+	Ref                string          `json:"ref"`
+	Preset             string          `json:"preset"`
+	Adhoc              filter.Criteria `json:"adhoc"`
+	PrivateDownloadURL bool            `json:"privateDownloadUrl"`
 }
 
 type previewResponse struct {
@@ -89,11 +90,12 @@ type selection struct {
 }
 
 type downloadRequest struct {
-	Owner  string
-	Repo   string
-	Ref    string
-	Preset string
-	Adhoc  filter.Criteria
+	Owner              string
+	Repo               string
+	Ref                string
+	Preset             string
+	Adhoc              filter.Criteria
+	PrivateDownloadURL bool
 }
 
 type apiError struct {
@@ -181,8 +183,8 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleUI(w http.ResponseWriter, _ *http.Request) {
 	ui.RenderIndex(w, ui.PageData{
-		AuthEnabled:  s.auth != nil && s.auth.Enabled(),
-		AuthRequired: s.auth != nil && s.auth.Required(),
+		AuthEnabled:  s.auth != nil,
+		AuthRequired: s.auth != nil,
 	})
 }
 
@@ -236,11 +238,12 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 
 	entries, truncated := manifestEntryPaths(sel.Manifest.Entries, previewEntriesLimit)
 	downloadURL, downloadURLUntil := s.buildDownloadURL(r, downloadRequest{
-		Owner:  owner,
-		Repo:   repo,
-		Ref:    sel.Commit,
-		Preset: req.Preset,
-		Adhoc:  req.Adhoc,
+		Owner:              owner,
+		Repo:               repo,
+		Ref:                sel.Commit,
+		Preset:             req.Preset,
+		Adhoc:              req.Adhoc,
+		PrivateDownloadURL: req.PrivateDownloadURL,
 	})
 	writeJSON(w, http.StatusOK, previewResponse{
 		Commit:           sel.Commit,
@@ -671,7 +674,7 @@ func (s *Server) buildDownloadURL(r *http.Request, req downloadRequest) (string,
 	}
 
 	token, _ := source.AccessTokenFromContext(r.Context())
-	if s.privateURL != nil && token != "" {
+	if req.PrivateDownloadURL && s.privateURL != nil && token != "" {
 		privateToken, expiresAt, err := s.privateURL.Encode(req.Owner, req.Repo, req.Ref, req.Preset, token, req.Adhoc)
 		if err == nil {
 			values := url.Values{}

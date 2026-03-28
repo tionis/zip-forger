@@ -406,6 +406,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 
           <section class="card">
             <div class="card-title">Download URL</div>
+            <label class="check"><input id="privateDownloadUrl" type="checkbox" /> Private URL</label>
             <input id="shareUrl" readonly />
             <button class="ghost" id="copyUrlBtn" type="button">Copy URL</button>
           </section>
@@ -455,7 +456,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <script>
     (function () {
       const THEME_KEY = "zip_forger.theme_mode";
-      const state = { busy: false, preview: null, previewKey: "", config: null };
+      const authEnabled = {{if .AuthEnabled}}true{{else}}false{{end}};
+      const authRequired = {{if .AuthRequired}}true{{else}}false{{end}};
+      const state = { busy: false, preview: null, previewKey: "", previewPrivateDownload: false, config: null };
       const nodes = {
         repo: document.getElementById("repo"),
         repoOptions: document.getElementById("repoOptions"),
@@ -469,6 +472,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         excludeGlobs: document.getElementById("excludeGlobs"),
         extensions: document.getElementById("extensions"),
         prefixes: document.getElementById("prefixes"),
+        privateDownloadUrl: document.getElementById("privateDownloadUrl"),
         loadConfigBtn: document.getElementById("loadConfigBtn"),
         previewBtn: document.getElementById("previewBtn"),
         downloadBtn: document.getElementById("downloadBtn"),
@@ -508,6 +512,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
         nodes.logoutBtn.addEventListener("click", logout);
         nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); invalidatePreview(); updateShareURL(); });
+        nodes.privateDownloadUrl.addEventListener("change", updateShareURL);
         nodes.copyUrlBtn.addEventListener("click", copyShareURL);
         
         const updateEvents = ["input", "change"];
@@ -599,6 +604,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       function invalidatePreview() {
         state.preview = null;
         state.previewKey = "";
+        state.previewPrivateDownload = false;
         nodes.downloadBtn.disabled = true;
         nodes.commitValue.textContent = "—";
         nodes.filesValue.textContent = "0";
@@ -653,15 +659,24 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         }
         nodes.configureTabBtn.disabled = false;
 
-        const previewMatches = state.preview && state.previewKey === currentSelectionKey();
-        const url = previewMatches && state.preview.downloadUrl
-          ? state.preview.downloadUrl
-          : buildCurrentDownloadURL();
+        const previewMatches = state.preview
+          && state.previewKey === currentSelectionKey()
+          && state.previewPrivateDownload === nodes.privateDownloadUrl.checked;
+        let url = "";
+        if (previewMatches && state.preview.downloadUrl) {
+          url = state.preview.downloadUrl;
+        } else if (!nodes.privateDownloadUrl.checked) {
+          url = buildCurrentDownloadURL();
+        }
         nodes.shareUrl.value = url ? new URL(url, window.location.origin).toString() : "";
         updateRepoSummary();
       }
 
       function copyShareURL() {
+        if (!nodes.shareUrl.value) {
+          setMessage(nodes.privateDownloadUrl.checked ? "Run preview to generate a private URL." : "No download URL available.", "err");
+          return;
+        }
         nodes.shareUrl.select();
         document.execCommand("copy");
         setMessage("URL copied to clipboard.", "ok");
@@ -750,9 +765,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         if (res.status === 204) return {};
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
+          if (authEnabled && authRequired && res.status === 401) {
+            nodes.authBanner.classList.add("visible");
+          }
           const msg = (data.error && data.error.message) || data.message || "Request failed: " + res.status;
           throw new Error(msg);
         }
+        nodes.authBanner.classList.remove("visible");
         return data;
       }
 
@@ -777,10 +796,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       async function downloadZip() {
-        const previewMatches = state.preview && state.previewKey === currentSelectionKey();
-        const url = previewMatches && state.preview.downloadUrl
-          ? state.preview.downloadUrl
-          : buildCurrentDownloadURL();
+        const url = buildCurrentDownloadURL();
         if (!url) return;
         // Crucial: Use a temporary link to ensure browsers handle the download 
         // while preserving the user session (cookies).
@@ -805,11 +821,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             body: JSON.stringify({
               ref: nodes.ref.value,
               preset: nodes.preset.value,
-              adhoc: buildCurrentAdhocPayload()
+              adhoc: buildCurrentAdhocPayload(),
+              privateDownloadUrl: nodes.privateDownloadUrl.checked
             })
           });
           state.preview = payload;
           state.previewKey = currentSelectionKey();
+          state.previewPrivateDownload = nodes.privateDownloadUrl.checked;
           nodes.commitValue.textContent = payload.commit.substring(0,8);
           nodes.filesValue.textContent = payload.selectedFiles.toLocaleString();
           nodes.bytesValue.textContent = formatBytes(payload.totalBytes);
@@ -932,6 +950,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       async function hydrateAuth() {
+        if (!authEnabled) {
+          nodes.authBadge.textContent = "auth disabled";
+          nodes.loginBtn.hidden = true;
+          nodes.logoutBtn.hidden = true;
+          nodes.authBanner.classList.remove("visible");
+          return;
+        }
+
         const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
         nodes.loginBtn.href = "/auth/login?return_to=" + returnTo;
 

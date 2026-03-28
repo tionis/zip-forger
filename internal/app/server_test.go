@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,7 +42,7 @@ presets:
 	writeTestFile(t, filepath.Join(root, "acme", "rules", "main", "rules", "core", "notes.txt"), []byte("txt-content"))
 
 	server := NewServer(Dependencies{
-		Source:        source.NewLocalFS(root),
+		Source:        newTestFSSource(root),
 		ManifestCache: cache.NewManifestCache(time.Minute, 128),
 		ArtifactStore: NewArtifactStore(t.TempDir()),
 		Logger:        log.New(io.Discard, "", 0),
@@ -334,7 +336,7 @@ func TestDownloadSupportsRangeRequests(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "acme", "rules", "main", "docs", "guide.txt"), []byte(strings.Repeat("0123456789", 20)))
 
 	server := NewServer(Dependencies{
-		Source:        source.NewLocalFS(root),
+		Source:        newTestFSSource(root),
 		ManifestCache: cache.NewManifestCache(time.Minute, 128),
 		ArtifactStore: NewArtifactStore(t.TempDir()),
 		Logger:        log.New(io.Discard, "", 0),
@@ -434,9 +436,12 @@ presets:
 	writeTestFile(t, filepath.Join(root, "acme", "rules", "main", "docs", "guide.pdf"), []byte("pdf-content"))
 
 	manager, err := auth.NewManager(auth.Config{
-		Enabled:       false,
-		Required:      true,
-		SessionSecret: "session-secret",
+		ForgejoBaseURL: "http://forgejo.local",
+		ClientID:       "client-id",
+		ClientSecret:   "client-secret",
+		RedirectURL:    "http://example.local/auth/callback",
+		SessionSecret:  "session-secret",
+		CookieSecure:   false,
 	}, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
@@ -448,7 +453,7 @@ presets:
 	}
 
 	server := NewServer(Dependencies{
-		Source:        source.NewLocalFS(root),
+		Source:        newTestFSSource(root),
 		ManifestCache: cache.NewManifestCache(time.Minute, 128),
 		Auth:          manager,
 		ArtifactStore: NewArtifactStore(t.TempDir()),
@@ -457,7 +462,29 @@ presets:
 	})
 	handler := server.Handler()
 
-	previewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main","preset":"docs"}`))
+	publicPreviewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main","preset":"docs"}`))
+	publicPreviewReq.Header.Set("Authorization", "Bearer tok-123")
+	publicPreviewResp := httptest.NewRecorder()
+	handler.ServeHTTP(publicPreviewResp, publicPreviewReq)
+	if publicPreviewResp.Code != http.StatusOK {
+		t.Fatalf("public preview status=%d body=%s", publicPreviewResp.Code, publicPreviewResp.Body.String())
+	}
+
+	var publicPreview struct {
+		DownloadURL      string     `json:"downloadUrl"`
+		DownloadURLUntil *time.Time `json:"downloadUrlUntil"`
+	}
+	if err := json.Unmarshal(publicPreviewResp.Body.Bytes(), &publicPreview); err != nil {
+		t.Fatalf("public preview json decode failed: %v", err)
+	}
+	if !strings.HasPrefix(publicPreview.DownloadURL, "/api/repos/acme/rules/download.zip?") {
+		t.Fatalf("expected public download URL by default, got %q", publicPreview.DownloadURL)
+	}
+	if publicPreview.DownloadURLUntil != nil {
+		t.Fatalf("expected no expiry for public download URL")
+	}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main","preset":"docs","privateDownloadUrl":true}`))
 	previewReq.Header.Set("Authorization", "Bearer tok-123")
 	previewResp := httptest.NewRecorder()
 	handler.ServeHTTP(previewResp, previewReq)
@@ -501,9 +528,12 @@ presets:
 
 func TestPrivateDownloadURLPropagatesEmbeddedAccessToken(t *testing.T) {
 	manager, err := auth.NewManager(auth.Config{
-		Enabled:       false,
-		Required:      true,
-		SessionSecret: "session-secret",
+		ForgejoBaseURL: "http://forgejo.local",
+		ClientID:       "client-id",
+		ClientSecret:   "client-secret",
+		RedirectURL:    "http://example.local/auth/callback",
+		SessionSecret:  "session-secret",
+		CookieSecure:   false,
 	}, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
@@ -557,7 +587,7 @@ func TestPrivateDownloadURLPropagatesEmbeddedAccessToken(t *testing.T) {
 	})
 	handler := server.Handler()
 
-	previewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main"}`))
+	previewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main","privateDownloadUrl":true}`))
 	previewReq.Header.Set("Authorization", "Bearer tok-123")
 	previewResp := httptest.NewRecorder()
 	handler.ServeHTTP(previewResp, previewReq)
@@ -638,7 +668,7 @@ func TestPrivateDownloadURLRejectsExpiredToken(t *testing.T) {
 	}
 
 	server := NewServer(Dependencies{
-		Source:        source.NewLocalFS(root),
+		Source:        newTestFSSource(root),
 		ManifestCache: cache.NewManifestCache(time.Minute, 128),
 		ArtifactStore: NewArtifactStore(t.TempDir()),
 		PrivateURL:    privateURL,
@@ -807,4 +837,234 @@ func (s *stubSource) GetFileSHA(context.Context, string, string, string, string)
 
 func (s *stubSource) UpsertFile(context.Context, string, string, string, string, []byte, string, string) error {
 	return nil
+}
+
+type testFSSource struct {
+	root string
+}
+
+func newTestFSSource(root string) *testFSSource {
+	return &testFSSource{root: root}
+}
+
+func (s *testFSSource) ResolveRef(_ context.Context, owner, repo, ref string) (string, error) {
+	repoRoot := filepath.Join(s.root, owner, repo)
+	info, err := os.Stat(repoRoot)
+	if err != nil || !info.IsDir() {
+		return "", source.ErrNotFound
+	}
+
+	if ref != "" {
+		refRoot := filepath.Join(repoRoot, ref)
+		info, err := os.Stat(refRoot)
+		if err != nil || !info.IsDir() {
+			return "", source.ErrNotFound
+		}
+		return ref, nil
+	}
+
+	mainRoot := filepath.Join(repoRoot, "main")
+	if info, err := os.Stat(mainRoot); err == nil && info.IsDir() {
+		return "main", nil
+	}
+
+	entries, err := os.ReadDir(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	refs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			refs = append(refs, entry.Name())
+		}
+	}
+	sort.Strings(refs)
+	if len(refs) == 0 {
+		return "", source.ErrNotFound
+	}
+	return refs[0], nil
+}
+
+func (s *testFSSource) ReadFile(_ context.Context, owner, repo, commit, filePath string) ([]byte, error) {
+	base := filepath.Join(s.root, owner, repo, commit)
+	fullPath, err := safeTestJoin(base, filePath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(fullPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, source.ErrNotFound
+	}
+	return data, err
+}
+
+func (s *testFSSource) ListFiles(_ context.Context, owner, repo, commit string, _ filter.Criteria) ([]source.Entry, error) {
+	base := filepath.Join(s.root, owner, repo, commit)
+	info, err := os.Stat(base)
+	if err != nil || !info.IsDir() {
+		return nil, source.ErrNotFound
+	}
+
+	entries := make([]source.Entry, 0, 1024)
+	err = filepath.WalkDir(base, func(current string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(base, current)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, source.Entry{
+			Path: filepath.ToSlash(relative),
+			Size: info.Size(),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Path < entries[j].Path
+	})
+	return entries, nil
+}
+
+func (s *testFSSource) OpenFile(_ context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+	base := filepath.Join(s.root, owner, repo, commit)
+	fullPath, err := safeTestJoin(base, filePath)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(fullPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, source.ErrNotFound
+	}
+	return f, err
+}
+
+func (s *testFSSource) OpenFileRange(_ context.Context, owner, repo, commit, filePath string, start, end int64) (io.ReadCloser, error) {
+	base := filepath.Join(s.root, owner, repo, commit)
+	fullPath, err := safeTestJoin(base, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(fullPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, source.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if start < 0 {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if end >= 0 && end < start {
+		f.Close()
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	if end < 0 {
+		return f, nil
+	}
+	return testReadCloser{
+		Reader: io.LimitReader(f, end-start),
+		Closer: f,
+	}, nil
+}
+
+func (s *testFSSource) SearchRepos(_ context.Context, query string) ([]string, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	query = strings.ToLower(query)
+	for _, ownerEntry := range entries {
+		if !ownerEntry.IsDir() {
+			continue
+		}
+		owner := ownerEntry.Name()
+		repoEntries, err := os.ReadDir(filepath.Join(s.root, owner))
+		if err != nil {
+			continue
+		}
+		for _, repoEntry := range repoEntries {
+			if !repoEntry.IsDir() {
+				continue
+			}
+			repo := repoEntry.Name()
+			fullName := owner + "/" + repo
+			if query == "" || strings.Contains(strings.ToLower(fullName), query) {
+				out = append(out, fullName)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (s *testFSSource) ListBranches(_ context.Context, owner, repo string) ([]string, error) {
+	root := filepath.Join(s.root, owner, repo)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, source.ErrNotFound
+		}
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			out = append(out, entry.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (s *testFSSource) GetFileSHA(context.Context, string, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (s *testFSSource) UpsertFile(_ context.Context, owner, repo, branch, filePath string, data []byte, _, _ string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		branch = "main"
+	}
+	base := filepath.Join(s.root, owner, repo, branch)
+	targetPath, err := safeTestJoin(base, filePath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetPath, data, 0o644)
+}
+
+func safeTestJoin(base, filePath string) (string, error) {
+	cleaned := filepath.Clean(filepath.FromSlash(filePath))
+	fullPath := filepath.Join(base, cleaned)
+	relative, err := filepath.Rel(base, fullPath)
+	if err != nil {
+		return "", err
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", source.ErrNotFound
+	}
+	return fullPath, nil
 }

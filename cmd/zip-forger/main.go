@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -34,21 +31,18 @@ func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
 	addr := getenv("ZIP_FORGER_ADDR", ":8080")
-	sourceType := strings.ToLower(getenv("ZIP_FORGER_SOURCE", "local"))
-	repoRoot := getenv("ZIP_FORGER_REPO_ROOT", "./mock-repos")
-	forgejoBaseURL := getenv("ZIP_FORGER_FORGEJO_BASE_URL", "")
+	forgejoBaseURL := strings.TrimSpace(getenv("ZIP_FORGER_FORGEJO_BASE_URL", ""))
+	sessionSecret := strings.TrimSpace(getenv("ZIP_FORGER_SESSION_SECRET", ""))
+	if forgejoBaseURL == "" {
+		logger.Fatal("source setup failed: ZIP_FORGER_FORGEJO_BASE_URL is required")
+	}
 
-	repoSource, err := buildSource(sourceType, repoRoot, forgejoBaseURL, treeDB, progressManager)
+	repoSource, err := buildSource(forgejoBaseURL, treeDB, progressManager)
 	if err != nil {
 		logger.Fatalf("source setup failed: %v", err)
 	}
 
-	authMode := strings.ToLower(getenv("ZIP_FORGER_AUTH_MODE", defaultAuthMode(sourceType)))
-	authRequired := parseBool(getenv("ZIP_FORGER_AUTH_REQUIRED", ""))
-	if authRequired == nil {
-		authRequired = boolPtr(sourceType == "forgejo")
-	}
-	authManager, err := buildAuthManager(authMode, *authRequired, forgejoBaseURL, logger)
+	authManager, err := buildAuthManager(forgejoBaseURL, logger)
 	if err != nil {
 		logger.Fatalf("auth setup failed: %v", err)
 	}
@@ -59,7 +53,7 @@ func main() {
 		Auth:          authManager,
 		Progress:      progressManager,
 		ArtifactStore: app.NewArtifactStore(filepath.Join(cacheDir, "downloads")),
-		PrivateURL:    buildPrivateURLCodec(logger),
+		PrivateURL:    buildPrivateURLCodec(sessionSecret, logger),
 		Logger:        logger,
 	})
 
@@ -73,17 +67,12 @@ func main() {
 	}
 
 	go func() {
-		logger.Printf("zip-forger listening on %s (source=%s)", addr, sourceType)
-		if sourceType == "local" {
-			logger.Printf("local repository root: %s", repoRoot)
-		}
-		if sourceType == "forgejo" {
-			logger.Printf("forgejo base URL: %s", forgejoBaseURL)
-		}
-		if authManager != nil && authManager.Enabled() {
-			logger.Printf("auth mode: %s (required=%t)", authMode, authManager.Required())
+		logger.Printf("zip-forger listening on %s (source=forgejo)", addr)
+		logger.Printf("forgejo base URL: %s", forgejoBaseURL)
+		if authManager != nil {
+			logger.Printf("auth: forgejo oauth enabled (required=true)")
 		} else {
-			logger.Printf("auth mode: none (required=%t)", *authRequired)
+			logger.Printf("auth: disabled")
 		}
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("server failed: %v", err)
@@ -110,77 +99,42 @@ func getenv(key, fallback string) string {
 	return value
 }
 
-func buildSource(sourceType, repoRoot, forgejoBaseURL string, treeDB *cache.TreeDB, progress *app.ProgressManager) (source.RepositorySource, error) {
-	switch sourceType {
-	case "local":
-		return source.NewLocalFS(repoRoot), nil
-	case "forgejo":
-		return source.NewForgejo(source.ForgejoConfig{
-			BaseURL: forgejoBaseURL,
-			HTTPClient: &http.Client{
-				Timeout: 60 * time.Second,
-			},
-			TreeDB:       treeDB,
-			OnProgress:   progress.Notify,
-			OnFinalizing: progress.Finalize,
-		})
-	default:
-		return nil, fmt.Errorf("unknown ZIP_FORGER_SOURCE value %q (expected local or forgejo)", sourceType)
-	}
+func buildSource(forgejoBaseURL string, treeDB *cache.TreeDB, progress *app.ProgressManager) (source.RepositorySource, error) {
+	return source.NewForgejo(source.ForgejoConfig{
+		BaseURL: forgejoBaseURL,
+		HTTPClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
+		TreeDB:       treeDB,
+		OnProgress:   progress.Notify,
+		OnFinalizing: progress.Finalize,
+	})
 }
 
-func buildAuthManager(mode string, required bool, forgejoBaseURL string, logger *log.Logger) (*auth.Manager, error) {
-	switch mode {
-	case "", "none":
-		if required {
-			return auth.NewManager(auth.Config{
-				Enabled:  false,
-				Required: true,
-			}, logger)
-		}
-		return nil, nil
-
-	case "forgejo-oauth":
-		sessionSecret := getenv("ZIP_FORGER_SESSION_SECRET", "")
-		if strings.TrimSpace(sessionSecret) == "" {
-			return nil, errors.New("ZIP_FORGER_SESSION_SECRET is required for forgejo-oauth mode")
-		}
-		redirectURL := getenv("ZIP_FORGER_OAUTH_REDIRECT_URL", "")
-		if strings.TrimSpace(redirectURL) == "" {
-			return nil, errors.New("ZIP_FORGER_OAUTH_REDIRECT_URL is required for forgejo-oauth mode")
-		}
-
-		scopes := parseCSV(getenv("ZIP_FORGER_OAUTH_SCOPES", "write:repository"))
-		return auth.NewManager(auth.Config{
-			Enabled:        true,
-			Required:       required,
-			ForgejoBaseURL: forgejoBaseURL,
-			ClientID:       getenv("ZIP_FORGER_OAUTH_CLIENT_ID", ""),
-			ClientSecret:   getenv("ZIP_FORGER_OAUTH_CLIENT_SECRET", ""),
-			RedirectURL:    redirectURL,
-			Scopes:         scopes,
-			CookieName:     getenv("ZIP_FORGER_SESSION_COOKIE_NAME", "zip_forger_session"),
-			CookieSecure:   getenv("ZIP_FORGER_SESSION_COOKIE_SECURE", "true") != "false",
-			SessionSecret:  sessionSecret,
-		}, logger)
-	default:
-		return nil, fmt.Errorf("unknown ZIP_FORGER_AUTH_MODE value %q (expected none or forgejo-oauth)", mode)
+func buildAuthManager(forgejoBaseURL string, logger *log.Logger) (*auth.Manager, error) {
+	sessionSecret := getenv("ZIP_FORGER_SESSION_SECRET", "")
+	if strings.TrimSpace(sessionSecret) == "" {
+		return nil, errors.New("ZIP_FORGER_SESSION_SECRET is required")
 	}
+
+	scopes := parseCSV(getenv("ZIP_FORGER_OAUTH_SCOPES", "write:repository"))
+	return auth.NewManager(auth.Config{
+		ForgejoBaseURL: forgejoBaseURL,
+		ClientID:       getenv("ZIP_FORGER_OAUTH_CLIENT_ID", ""),
+		ClientSecret:   getenv("ZIP_FORGER_OAUTH_CLIENT_SECRET", ""),
+		RedirectURL:    getenv("ZIP_FORGER_OAUTH_REDIRECT_URL", ""),
+		Scopes:         scopes,
+		CookieName:     getenv("ZIP_FORGER_SESSION_COOKIE_NAME", "zip_forger_session"),
+		CookieSecure:   getenv("ZIP_FORGER_SESSION_COOKIE_SECURE", "true") != "false",
+		SessionSecret:  sessionSecret,
+	}, logger)
 }
 
-func buildPrivateURLCodec(logger *log.Logger) *app.PrivateDownloadCodec {
-	secret := strings.TrimSpace(getenv("ZIP_FORGER_DOWNLOAD_URL_SECRET", ""))
-	if secret == "" {
-		secret = strings.TrimSpace(getenv("ZIP_FORGER_SESSION_SECRET", ""))
-	}
-	if secret == "" {
-		generated, err := randomStartupSecret()
-		if err != nil {
-			logger.Printf("private download URLs disabled: unable to generate startup secret: %v", err)
-			return nil
-		}
-		secret = generated
-		logger.Printf("private download URLs use an ephemeral startup secret; generated URLs stop working after restart")
+func buildPrivateURLCodec(sessionSecret string, logger *log.Logger) *app.PrivateDownloadCodec {
+	sessionSecret = strings.TrimSpace(sessionSecret)
+	if sessionSecret == "" {
+		logger.Printf("private download URLs disabled: ZIP_FORGER_SESSION_SECRET is not configured")
+		return nil
 	}
 
 	ttl := 24 * time.Hour
@@ -192,7 +146,7 @@ func buildPrivateURLCodec(logger *log.Logger) *app.PrivateDownloadCodec {
 		ttl = parsedTTL
 	}
 
-	codec, err := app.NewPrivateDownloadCodec(secret, ttl)
+	codec, err := app.NewPrivateDownloadCodec(sessionSecret+"\x00private-download-url", ttl)
 	if err != nil {
 		logger.Printf("private download URLs disabled: %v", err)
 		return nil
@@ -213,37 +167,4 @@ func parseCSV(value string) []string {
 		}
 	}
 	return out
-}
-
-func defaultAuthMode(sourceType string) string {
-	if sourceType == "forgejo" {
-		return "forgejo-oauth"
-	}
-	return "none"
-}
-
-func parseBool(value string) *bool {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return nil
-	}
-	if value == "1" || value == "true" || value == "yes" || value == "on" {
-		return boolPtr(true)
-	}
-	if value == "0" || value == "false" || value == "no" || value == "off" {
-		return boolPtr(false)
-	}
-	return nil
-}
-
-func boolPtr(v bool) *bool {
-	return &v
-}
-
-func randomStartupSecret() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
