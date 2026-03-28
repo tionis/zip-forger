@@ -168,7 +168,7 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 	query.Set("client_id", m.cfg.ClientID)
 	query.Set("redirect_uri", m.cfg.RedirectURL)
 	query.Set("state", state)
-	query.Set("scope", strings.Join(m.cfg.Scopes, ","))
+	query.Set("scope", strings.Join(m.cfg.Scopes, " "))
 
 	redirectURL := m.cfg.ForgejoBaseURL + "/login/oauth/authorize?" + query.Encode()
 	m.logger.Printf("auth: redirecting to %s", redirectURL)
@@ -325,20 +325,19 @@ func (m *Manager) exchangeCode(ctx context.Context, code string) (accessToken, t
 			return "", "", "", time.Time{}, fmt.Errorf("auth: token response invalid: %s", string(body))
 		}
 	}
-	m.logger.Printf("auth: token exchange successful, scope granted: %q", tokenResponse.Scope)
-
 	if tokenResponse.AccessToken == "" {
 		return "", "", "", time.Time{}, errors.New("auth: oauth exchange did not return access token")
 	}
 	if tokenResponse.TokenType == "" {
 		tokenResponse.TokenType = "token"
 	}
-	
+
 	// If scope is empty in response, it often means it matches the requested scopes.
 	grantedScope := tokenResponse.Scope
 	if grantedScope == "" {
-		grantedScope = strings.Join(m.cfg.Scopes, ",")
+		grantedScope = strings.Join(m.cfg.Scopes, " ")
 	}
+	m.logger.Printf("auth: token exchange successful, scope granted: %q", grantedScope)
 
 	if tokenResponse.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second)

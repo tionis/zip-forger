@@ -421,7 +421,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               
               <div id="indexProgress" hidden>
                 <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--muted);">
-                  <span>Indexing repository...</span>
+                  <span id="indexStatus">Indexing repository...</span>
                   <span id="indexCount">0 files discovered</span>
                 </div>
                 <div class="index-bar-bg"><div id="indexBar" class="index-bar-fill"></div></div>
@@ -480,6 +480,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         bytesValue: document.getElementById("bytesValue"),
         treeView: document.getElementById("treeView"),
         indexProgress: document.getElementById("indexProgress"),
+        indexStatus: document.getElementById("indexStatus"),
         indexCount: document.getElementById("indexCount"),
         indexBar: document.getElementById("indexBar"),
         authBadge: document.getElementById("authBadge"),
@@ -626,6 +627,24 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         return qs ? base + "?" + qs : base;
       }
 
+      function buildCurrentAdhocPayload() {
+        if (!nodes.useAdhoc.checked) {
+          return {
+            includeGlobs: [],
+            excludeGlobs: [],
+            extensions: [],
+            pathPrefixes: []
+          };
+        }
+
+        return {
+          includeGlobs: nodes.includeGlobs.value.split("\n").filter(Boolean),
+          excludeGlobs: nodes.excludeGlobs.value.split("\n").filter(Boolean),
+          extensions: nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean),
+          pathPrefixes: nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean)
+        };
+      }
+
       function updateShareURL() {
         if (!nodes.repo.value.includes("/")) {
           nodes.shareUrl.value = "";
@@ -701,10 +720,18 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         const url = "/api/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/index-progress?ref=" + encodeURIComponent(ref);
         progressSource = new EventSource(url);
         nodes.indexProgress.hidden = false;
+        nodes.indexStatus.textContent = "Indexing repository...";
+        nodes.indexCount.textContent = "0 files discovered";
         nodes.indexBar.style.width = "0%";
         progressSource.onmessage = (e) => {
           const data = JSON.parse(e.data);
           nodes.indexCount.textContent = data.count.toLocaleString() + " files discovered";
+          if (data.phase === "finalizing") {
+            nodes.indexStatus.textContent = "Finalizing selection...";
+            nodes.indexBar.style.width = "100%";
+            return;
+          }
+          nodes.indexStatus.textContent = "Indexing repository...";
           const val = (Math.log10(data.count + 1) / 6) * 100;
           nodes.indexBar.style.width = Math.min(val, 99) + "%";
         };
@@ -750,7 +777,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       }
 
       async function downloadZip() {
-        const url = buildCurrentDownloadURL();
+        const previewMatches = state.preview && state.previewKey === currentSelectionKey();
+        const url = previewMatches && state.preview.downloadUrl
+          ? state.preview.downloadUrl
+          : buildCurrentDownloadURL();
         if (!url) return;
         // Crucial: Use a temporary link to ensure browsers handle the download 
         // while preserving the user session (cookies).
@@ -775,12 +805,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
             body: JSON.stringify({
               ref: nodes.ref.value,
               preset: nodes.preset.value,
-              adhoc: {
-                includeGlobs: nodes.includeGlobs.value.split("\n").filter(Boolean),
-                excludeGlobs: nodes.excludeGlobs.value.split("\n").filter(Boolean),
-                extensions: nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean),
-                pathPrefixes: nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean)
-              }
+              adhoc: buildCurrentAdhocPayload()
             })
           });
           state.preview = payload;

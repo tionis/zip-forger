@@ -26,10 +26,11 @@ import (
 )
 
 type ForgejoConfig struct {
-	BaseURL    string
-	HTTPClient *http.Client
-	TreeDB     TreeDB
-	OnProgress func(owner, repo, commit string, count int64)
+	BaseURL      string
+	HTTPClient   *http.Client
+	TreeDB       TreeDB
+	OnProgress   func(owner, repo, commit string, count int64)
+	OnFinalizing func(owner, repo, commit string, count int64)
 }
 
 type TreeDB interface {
@@ -46,11 +47,21 @@ type TreeDB interface {
 }
 
 type Forgejo struct {
-	baseURL    string
-	client     *http.Client
-	db         TreeDB
-	onProgress func(owner, repo, commit string, count int64)
+	baseURL      string
+	client       *http.Client
+	db           TreeDB
+	onProgress   func(owner, repo, commit string, count int64)
+	onFinalizing func(owner, repo, commit string, count int64)
 }
+
+type authScheme int
+
+const (
+	authSchemeNone authScheme = iota
+	authSchemeBearer
+	authSchemeToken
+	authSchemeBasicOAuth2
+)
 
 func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	baseURL := strings.TrimSpace(strings.TrimSuffix(cfg.BaseURL, "/"))
@@ -64,10 +75,11 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	}
 
 	return &Forgejo{
-		baseURL:    baseURL,
-		client:     client,
-		db:         cfg.TreeDB,
-		onProgress: cfg.OnProgress,
+		baseURL:      baseURL,
+		client:       client,
+		db:           cfg.TreeDB,
+		onProgress:   cfg.OnProgress,
+		onFinalizing: cfg.OnFinalizing,
 	}, nil
 }
 
@@ -114,24 +126,49 @@ func (s *Forgejo) ListFiles(ctx context.Context, owner, repo, commit string, cri
 }
 
 func (s *Forgejo) OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
-	reader, body, err := s.openRawReader(ctx, owner, repo, commit, filePath)
+	return s.openMediaReader(ctx, owner, repo, commit, filePath)
+}
+
+func (s *Forgejo) openMediaReader(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+	relativePath := normalizePath(filePath)
+	if relativePath == "" {
+		return nil, errors.New("source: file path is required")
+	}
+
+	query := url.Values{}
+	query.Set("ref", commit)
+	mediaURL := fmt.Sprintf("%s/api/v1/repos/%s/%s/media/%s?%s",
+		s.baseURL,
+		url.PathEscape(owner),
+		url.PathEscape(repo),
+		escapePath(relativePath),
+		query.Encode(),
+	)
+
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	pointer, isPointer := parseLFSPointer(reader)
-	if !isPointer {
-		return struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: reader,
-			Closer: body,
-		}, nil
+	if resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		return nil, ErrNotFound
 	}
-
-	body.Close()
-	return s.downloadLFSObject(ctx, owner, repo, pointer.OID, pointer.Size)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		resp.Body.Close()
+		if len(bytes.TrimSpace(body)) > 0 {
+			return nil, fmt.Errorf("%w: forgejo media read %s %d: %s", ErrUnauthorized, mediaURL, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return nil, fmt.Errorf("%w: forgejo media read %s %d", ErrUnauthorized, mediaURL, resp.StatusCode)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		resp.Body.Close()
+		return nil, fmt.Errorf("source: forgejo media read failed status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Body, nil
 }
 
 func (s *Forgejo) ResolveEntrySizes(ctx context.Context, owner, repo, commit string, entries []Entry) ([]Entry, error) {
@@ -184,13 +221,9 @@ func (s *Forgejo) openRawReader(ctx context.Context, owner, repo, commit, filePa
 		query.Encode(),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -199,8 +232,12 @@ func (s *Forgejo) openRawReader(ctx context.Context, owner, repo, commit, filePa
 		return nil, nil, ErrNotFound
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		resp.Body.Close()
-		return nil, nil, ErrUnauthorized
+		if len(bytes.TrimSpace(body)) > 0 {
+			return nil, nil, fmt.Errorf("%w: forgejo raw read %s %d: %s", ErrUnauthorized, rawURL, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return nil, nil, fmt.Errorf("%w: forgejo raw read %s %d", ErrUnauthorized, rawURL, resp.StatusCode)
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
@@ -328,15 +365,15 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 		url.PathEscape(repo),
 		escapePath(filePath),
 	)
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -415,15 +452,15 @@ func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/vnd.git-lfs+json")
-	req.Header.Set("Accept", "application/vnd.git-lfs+json")
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/vnd.git-lfs+json")
+		req.Header.Set("Accept", "application/vnd.git-lfs+json")
+		return req, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +470,11 @@ func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string
 	case http.StatusNotFound:
 		return nil, ErrNotFound
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, ErrUnauthorized
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if len(bytes.TrimSpace(errBody)) > 0 {
+			return nil, fmt.Errorf("%w: forgejo lfs batch %s %d: %s", ErrUnauthorized, endpoint, resp.StatusCode, strings.TrimSpace(string(errBody)))
+		}
+		return nil, fmt.Errorf("%w: forgejo lfs batch %s %d", ErrUnauthorized, endpoint, resp.StatusCode)
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
@@ -492,15 +533,16 @@ func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string
 		downloadURL = base.ResolveReference(parsed).String()
 	}
 
-	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range downloadAction.Header {
-		downloadReq.Header.Set(key, value)
-	}
-
-	downloadResp, err := s.client.Do(downloadReq)
+	downloadResp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range downloadAction.Header {
+			downloadReq.Header.Set(key, value)
+		}
+		return downloadReq, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -509,8 +551,12 @@ func (s *Forgejo) downloadLFSObject(ctx context.Context, owner, repo, oid string
 		return nil, ErrNotFound
 	}
 	if downloadResp.StatusCode == http.StatusUnauthorized || downloadResp.StatusCode == http.StatusForbidden {
+		errBody, _ := io.ReadAll(io.LimitReader(downloadResp.Body, 4<<10))
 		downloadResp.Body.Close()
-		return nil, ErrUnauthorized
+		if len(bytes.TrimSpace(errBody)) > 0 {
+			return nil, fmt.Errorf("%w: forgejo lfs download %s %d: %s", ErrUnauthorized, downloadURL, downloadResp.StatusCode, strings.TrimSpace(string(errBody)))
+		}
+		return nil, fmt.Errorf("%w: forgejo lfs download %s %d", ErrUnauthorized, downloadURL, downloadResp.StatusCode)
 	}
 	if downloadResp.StatusCode >= http.StatusBadRequest {
 		errBody, _ := io.ReadAll(io.LimitReader(downloadResp.Body, 4<<10))
@@ -793,6 +839,9 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 	}
 
 	if s.db != nil {
+		if s.onFinalizing != nil {
+			s.onFinalizing(owner, repo, commit, count)
+		}
 		_ = s.db.MarkIndexed(ctx, rootSHA)
 		entries, err := s.db.Search(ctx, rootSHA, criteria)
 		if err == nil && s.onProgress != nil {
@@ -833,13 +882,9 @@ func (s *Forgejo) getJSON(ctx context.Context, endpoint string, into any) error 
 }
 
 func (s *Forgejo) doGetJSON(ctx context.Context, endpoint string, into any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	})
 	if err != nil {
 		return err
 	}
@@ -851,9 +896,9 @@ func (s *Forgejo) doGetJSON(ctx context.Context, endpoint string, into any) erro
 	case http.StatusUnauthorized, http.StatusForbidden:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		if len(bytes.TrimSpace(body)) > 0 {
-			return fmt.Errorf("%w: forgejo %d: %s", ErrUnauthorized, resp.StatusCode, strings.TrimSpace(string(body)))
+			return fmt.Errorf("%w: forgejo request %s %d: %s", ErrUnauthorized, endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
 		}
-		return ErrUnauthorized
+		return fmt.Errorf("%w: forgejo request %s %d", ErrUnauthorized, endpoint, resp.StatusCode)
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		return ErrUnsupportedSearchMode
@@ -869,12 +914,50 @@ func (s *Forgejo) doGetJSON(ctx context.Context, endpoint string, into any) erro
 	return nil
 }
 
-func (s *Forgejo) addAuthHeader(req *http.Request, ctx context.Context) {
+func (s *Forgejo) doWithAuthFallback(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {
 	token, ok := AccessTokenFromContext(ctx)
-	if !ok {
-		return
+	schemes := []authScheme{authSchemeNone}
+	if ok && strings.TrimSpace(token) != "" {
+		schemes = []authScheme{
+			authSchemeBearer,
+			authSchemeToken,
+			authSchemeBasicOAuth2,
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+
+	for idx, scheme := range schemes {
+		req, err := build()
+		if err != nil {
+			return nil, err
+		}
+		s.applyAuthScheme(req, token, scheme)
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+			return resp, nil
+		}
+		if idx == len(schemes)-1 {
+			return resp, nil
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		resp.Body.Close()
+	}
+
+	return nil, errors.New("source: no auth schemes available")
+}
+
+func (s *Forgejo) applyAuthScheme(req *http.Request, token string, scheme authScheme) {
+	switch scheme {
+	case authSchemeBearer:
+		req.Header.Set("Authorization", "Bearer "+token)
+	case authSchemeToken:
+		req.Header.Set("Authorization", "token "+token)
+	case authSchemeBasicOAuth2:
+		req.SetBasicAuth("oauth2", token)
+	}
 }
 
 func escapePath(value string) string {
@@ -905,13 +988,9 @@ func (s *Forgejo) GetFileSHA(ctx context.Context, owner, repo, branch, filePath 
 		url.QueryEscape(branch),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	s.addAuthHeader(req, ctx)
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doWithAuthFallback(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -921,7 +1000,11 @@ func (s *Forgejo) GetFileSHA(ctx context.Context, owner, repo, branch, filePath 
 	case http.StatusNotFound:
 		return "", ErrNotFound
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "", ErrUnauthorized
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if len(bytes.TrimSpace(respBody)) > 0 {
+			return "", fmt.Errorf("%w: forgejo metadata %s %d: %s", ErrUnauthorized, endpoint, resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return "", fmt.Errorf("%w: forgejo metadata %s %d", ErrUnauthorized, endpoint, resp.StatusCode)
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))

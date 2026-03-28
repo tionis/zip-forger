@@ -252,13 +252,46 @@ func TestIndexProgressResolvesRefAlias(t *testing.T) {
 	defer resp.Body.Close()
 
 	reader := bufio.NewReader(resp.Body)
-	if got := readSSEDataLine(t, reader); got != `{"count": 0}` {
+	if got := readSSEDataLine(t, reader); got != `{"count": 0, "phase": "indexing"}` {
 		t.Fatalf("unexpected initial SSE payload: %s", got)
 	}
 
 	progress.Notify("acme", "rules", "commit-sha", 7)
-	if got := readSSEDataLine(t, reader); got != `{"count": 7}` {
+	if got := readSSEDataLine(t, reader); got != `{"count": 7, "phase": "indexing"}` {
 		t.Fatalf("unexpected progress SSE payload: %s", got)
+	}
+}
+
+func TestIndexProgressSendsFinalizingPhase(t *testing.T) {
+	progress := NewProgressManager()
+	server := NewServer(Dependencies{
+		Progress:      progress,
+		ManifestCache: cache.NewManifestCache(time.Minute, 128),
+		ArtifactStore: NewArtifactStore(t.TempDir()),
+		Logger:        log.New(io.Discard, "", 0),
+	})
+
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/repos/acme/rules/index-progress?ref=main", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest failed: %v", err)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("http.Do failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	if got := readSSEDataLine(t, reader); got != `{"count": 0, "phase": "indexing"}` {
+		t.Fatalf("unexpected initial SSE payload: %s", got)
+	}
+
+	progress.Finalize("acme", "rules", "main", 42)
+	if got := readSSEDataLine(t, reader); got != `{"count": 42, "phase": "finalizing"}` {
+		t.Fatalf("unexpected finalizing SSE payload: %s", got)
 	}
 }
 
@@ -385,7 +418,7 @@ presets:
 	if err := json.Unmarshal(previewResp.Body.Bytes(), &preview); err != nil {
 		t.Fatalf("preview json decode failed: %v", err)
 	}
-	if !strings.Contains(preview.DownloadURL, "/api/downloads/private.zip?token=") {
+	if !strings.HasPrefix(preview.DownloadURL, "/api/downloads/private.zip?token=") {
 		t.Fatalf("expected private download URL, got %q", preview.DownloadURL)
 	}
 
@@ -410,6 +443,87 @@ presets:
 	}
 	if len(reader.File) != 1 || reader.File[0].Name != "docs/guide.pdf" {
 		t.Fatalf("unexpected zip contents: %#v", reader.File)
+	}
+}
+
+func TestPrivateDownloadURLPropagatesEmbeddedAccessToken(t *testing.T) {
+	manager, err := auth.NewManager(auth.Config{
+		Enabled:       false,
+		Required:      true,
+		SessionSecret: "session-secret",
+	}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	privateURL, err := NewPrivateDownloadCodec("download-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewPrivateDownloadCodec failed: %v", err)
+	}
+
+	checkToken := func(ctx context.Context) error {
+		token, ok := source.AccessTokenFromContext(ctx)
+		if !ok || token != "tok-123" {
+			return errors.New("missing embedded access token")
+		}
+		return nil
+	}
+
+	server := NewServer(Dependencies{
+		Source: &stubSource{
+			resolveRef: func(ctx context.Context, owner, repo, ref string) (string, error) {
+				if err := checkToken(ctx); err != nil {
+					return "", err
+				}
+				return "commit-123", nil
+			},
+			readFile: func(ctx context.Context, owner, repo, commit, filePath string) ([]byte, error) {
+				if err := checkToken(ctx); err != nil {
+					return nil, err
+				}
+				return nil, source.ErrNotFound
+			},
+			listFiles: func(ctx context.Context, owner, repo, commit string, criteria filter.Criteria) ([]source.Entry, error) {
+				if err := checkToken(ctx); err != nil {
+					return nil, err
+				}
+				return []source.Entry{{Path: "docs/guide.pdf", Size: 11}}, nil
+			},
+			openFile: func(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error) {
+				if err := checkToken(ctx); err != nil {
+					return nil, err
+				}
+				return io.NopCloser(strings.NewReader("pdf-content")), nil
+			},
+		},
+		ManifestCache: cache.NewManifestCache(time.Minute, 128),
+		Auth:          manager,
+		ArtifactStore: NewArtifactStore(t.TempDir()),
+		PrivateURL:    privateURL,
+		Logger:        log.New(io.Discard, "", 0),
+	})
+	handler := server.Handler()
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/api/repos/acme/rules/preview", bytes.NewBufferString(`{"ref":"main"}`))
+	previewReq.Header.Set("Authorization", "Bearer tok-123")
+	previewResp := httptest.NewRecorder()
+	handler.ServeHTTP(previewResp, previewReq)
+	if previewResp.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", previewResp.Code, previewResp.Body.String())
+	}
+
+	var preview struct {
+		DownloadURL string `json:"downloadUrl"`
+	}
+	if err := json.Unmarshal(previewResp.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("preview json decode failed: %v", err)
+	}
+
+	downloadReq := httptest.NewRequest(http.MethodGet, preview.DownloadURL, nil)
+	downloadResp := httptest.NewRecorder()
+	handler.ServeHTTP(downloadResp, downloadReq)
+	if downloadResp.Code != http.StatusOK {
+		t.Fatalf("private download status=%d body=%s", downloadResp.Code, downloadResp.Body.String())
 	}
 }
 

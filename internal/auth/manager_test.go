@@ -56,6 +56,9 @@ func TestOAuthLoginCallbackFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse failed: %v", err)
 	}
+	if got := redirectURL.Query().Get("scope"); got != "read:repository read:user write:repository" {
+		t.Fatalf("unexpected scope query parameter: %q", got)
+	}
 	state := redirectURL.Query().Get("state")
 	if state == "" {
 		t.Fatalf("expected state query parameter")

@@ -120,8 +120,9 @@ func buildSource(sourceType, repoRoot, forgejoBaseURL string, treeDB *cache.Tree
 			HTTPClient: &http.Client{
 				Timeout: 60 * time.Second,
 			},
-			TreeDB:     treeDB,
-			OnProgress: progress.Notify,
+			TreeDB:       treeDB,
+			OnProgress:   progress.Notify,
+			OnFinalizing: progress.Finalize,
 		})
 	default:
 		return nil, fmt.Errorf("unknown ZIP_FORGER_SOURCE value %q (expected local or forgejo)", sourceType)

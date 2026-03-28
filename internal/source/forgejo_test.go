@@ -116,6 +116,7 @@ func (m *mockTreeDB) Search(_ context.Context, rootSHA string, criteria filter.C
 func TestForgejoResolveListAndOpen(t *testing.T) {
 	db := newMockTreeDB()
 	progressCount := int64(0)
+	finalizingCount := int64(0)
 
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
@@ -125,6 +126,12 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 				t.Fatalf("unexpected progress notification owner=%s repo=%s commit=%s count=%d", owner, repo, commit, count)
 			}
 			progressCount = count
+		},
+		OnFinalizing: func(owner, repo, commit string, count int64) {
+			if owner != "acme" || repo != "rules" || commit != "commit-sha" {
+				t.Fatalf("unexpected finalizing notification owner=%s repo=%s commit=%s count=%d", owner, repo, commit, count)
+			}
+			finalizingCount = count
 		},
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -177,7 +184,7 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
   ]
 }`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/rules/core/guide.pdf" && r.URL.Query().Get("ref") == "commit-sha":
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/media/rules/core/guide.pdf" && r.URL.Query().Get("ref") == "commit-sha":
 					return response(http.StatusOK, "pdf-content"), nil
 				}
 				return response(http.StatusNotFound, `{"message":"not found"}`), nil
@@ -206,6 +213,9 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 	}
 	if progressCount != 3 {
 		t.Fatalf("expected final progress count 3, got %d", progressCount)
+	}
+	if finalizingCount != 3 {
+		t.Fatalf("expected finalizing count 3, got %d", finalizingCount)
 	}
 	if entries[0].Path != "README.md" && entries[0].Path != "rules/core/docs/manual.pdf" {
 		t.Fatalf("unexpected first entry: %#v", entries[0])
@@ -456,46 +466,17 @@ func TestForgejoUpsertFileCreatesWithPost(t *testing.T) {
 	}
 }
 
-func TestForgejoOpenFileLFSFallback(t *testing.T) {
+func TestForgejoOpenFileUsesMediaEndpoint(t *testing.T) {
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "Bearer tok-123" && !strings.HasPrefix(r.URL.Path, "/lfs-download/") {
+				if r.Header.Get("Authorization") != "Bearer tok-123" {
 					return response(http.StatusUnauthorized, "missing token"), nil
 				}
 
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/assets/book.pdf":
-					return response(http.StatusOK, `version https://git-lfs.github.com/spec/v1
-oid sha256:deadbeef
-size 12345
-`), nil
-
-				case r.Method == http.MethodPost && r.URL.Path == "/acme/rules.git/info/lfs/objects/batch":
-					defer r.Body.Close()
-					raw, _ := io.ReadAll(r.Body)
-					if !strings.Contains(string(raw), `"oid":"deadbeef"`) {
-						return response(http.StatusBadRequest, `{"message":"missing oid"}`), nil
-					}
-					return response(http.StatusOK, `{
-  "objects":[
-    {
-      "oid":"deadbeef",
-      "actions":{
-        "download":{
-          "href":"http://forgejo.local/lfs-download/deadbeef",
-          "header":{"X-Test":"1"}
-        }
-      }
-    }
-  ]
-}`), nil
-
-				case r.Method == http.MethodGet && r.URL.Path == "/lfs-download/deadbeef":
-					if r.Header.Get("X-Test") != "1" {
-						return response(http.StatusForbidden, "missing header"), nil
-					}
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/media/assets/book.pdf" && r.URL.Query().Get("ref") == "main":
 					return response(http.StatusOK, "real-binary-content"), nil
 				}
 				return response(http.StatusNotFound, `{"message":"not found"}`), nil
@@ -518,7 +499,46 @@ size 12345
 		t.Fatalf("ReadAll failed: %v", err)
 	}
 	if strings.TrimSpace(string(body)) != "real-binary-content" {
-		t.Fatalf("unexpected LFS fallback content: %q", string(body))
+		t.Fatalf("unexpected media content: %q", string(body))
+	}
+}
+
+func TestForgejoOpenFileMediaFallsBackToTokenAuthForLegacyServers(t *testing.T) {
+	client, err := NewForgejo(ForgejoConfig{
+		BaseURL: "http://forgejo.local",
+		HTTPClient: &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/media/assets/book.pdf" && r.URL.Query().Get("ref") == "main":
+					if r.Header.Get("Authorization") != "Bearer tok-123" {
+						if r.Header.Get("Authorization") == "token tok-123" {
+							return response(http.StatusOK, "real-binary-content"), nil
+						}
+						return response(http.StatusUnauthorized, "missing auth"), nil
+					}
+					return response(http.StatusUnauthorized, "bearer not accepted for legacy media"), nil
+				}
+				return response(http.StatusNotFound, `{"message":"not found"}`), nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewForgejo failed: %v", err)
+	}
+
+	ctx := WithAccessToken(context.Background(), "tok-123")
+	reader, err := client.OpenFile(ctx, "acme", "rules", "main", "assets/book.pdf")
+	if err != nil {
+		t.Fatalf("OpenFile failed: %v", err)
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "real-binary-content" {
+		t.Fatalf("unexpected media content: %q", string(body))
 	}
 }
 
@@ -570,35 +590,11 @@ func TestForgejoResolveEntrySizesUsesLFSPointerSize(t *testing.T) {
 	}
 }
 
-func TestForgejoLFSRejectsOIDMismatch(t *testing.T) {
+func TestForgejoOpenFileMediaNotFound(t *testing.T) {
 	client, err := NewForgejo(ForgejoConfig{
 		BaseURL: "http://forgejo.local",
 		HTTPClient: &http.Client{
 			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") != "Bearer tok-123" {
-					return response(http.StatusUnauthorized, "missing token"), nil
-				}
-
-				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/raw/assets/big.bin":
-					return response(http.StatusOK, "version https://git-lfs.github.com/spec/v1\noid sha256:aaaa1111\nsize 999\n"), nil
-
-				case r.Method == http.MethodPost && r.URL.Path == "/acme/rules.git/info/lfs/objects/batch":
-					// Return an object with a DIFFERENT OID than requested
-					return response(http.StatusOK, `{
-  "objects":[
-    {
-      "oid":"wrong-oid-bbbb2222",
-      "actions":{
-        "download":{
-          "href":"http://forgejo.local/lfs-download/wrong",
-          "header":{}
-        }
-      }
-    }
-  ]
-}`), nil
-				}
 				return response(http.StatusNotFound, `{"message":"not found"}`), nil
 			}),
 		},
@@ -608,12 +604,9 @@ func TestForgejoLFSRejectsOIDMismatch(t *testing.T) {
 	}
 
 	ctx := WithAccessToken(context.Background(), "tok-123")
-	_, err = client.OpenFile(ctx, "acme", "rules", "main", "assets/big.bin")
-	if err == nil {
-		t.Fatal("expected error when LFS batch returns mismatched OID, got nil")
-	}
-	if !strings.Contains(err.Error(), "did not include object") {
-		t.Fatalf("expected 'did not include object' error, got: %v", err)
+	_, err = client.OpenFile(ctx, "acme", "rules", "main", "assets/missing.bin")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 

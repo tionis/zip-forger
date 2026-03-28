@@ -9,13 +9,18 @@ import (
 
 type ProgressManager struct {
 	mu        sync.Mutex
-	listeners map[string][]chan int64 // key: owner/repo/commit
+	listeners map[string][]chan progressUpdate // key: owner/repo/commit
 	lastCount map[string]int64
+}
+
+type progressUpdate struct {
+	Count int64
+	Phase string
 }
 
 func NewProgressManager() *ProgressManager {
 	return &ProgressManager{
-		listeners: make(map[string][]chan int64),
+		listeners: make(map[string][]chan progressUpdate),
 		lastCount: make(map[string]int64),
 	}
 }
@@ -34,7 +39,24 @@ func (m *ProgressManager) Notify(owner, repo, commit string, count int64) {
 	channels := m.listeners[k]
 	for _, ch := range channels {
 		select {
-		case ch <- count:
+		case ch <- progressUpdate{Count: count, Phase: "indexing"}:
+		default:
+			// Buffer full, skip this update
+		}
+	}
+}
+
+func (m *ProgressManager) Finalize(owner, repo, commit string, count int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	k := m.key(owner, repo, commit)
+	m.lastCount[k] = count
+
+	channels := m.listeners[k]
+	for _, ch := range channels {
+		select {
+		case ch <- progressUpdate{Count: count, Phase: "finalizing"}:
 		default:
 			// Buffer full, skip this update
 		}
@@ -53,7 +75,7 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request, owne
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	ch := make(chan int64, 10)
+	ch := make(chan progressUpdate, 10)
 
 	m.mu.Lock()
 	initialCount := int64(0)
@@ -89,13 +111,17 @@ func (m *ProgressManager) HandleSSE(w http.ResponseWriter, r *http.Request, owne
 	}
 
 	// Send initial/cached count immediately
-	fmt.Fprintf(w, "data: {\"count\": %d}\n\n", initialCount)
+	fmt.Fprintf(w, "data: {\"count\": %d, \"phase\": %q}\n\n", initialCount, "indexing")
 	flusher.Flush()
 
 	for {
 		select {
-		case count := <-ch:
-			fmt.Fprintf(w, "data: {\"count\": %d}\n\n", count)
+		case update := <-ch:
+			phase := update.Phase
+			if phase == "" {
+				phase = "indexing"
+			}
+			fmt.Fprintf(w, "data: {\"count\": %d, \"phase\": %q}\n\n", update.Count, phase)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

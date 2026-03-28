@@ -436,7 +436,8 @@ func (s *Server) handlePrivateDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sel, err := s.buildSelectionForCommit(r.Context(), payload.Owner, payload.Repo, payload.Commit, payload.Preset, payload.Adhoc)
+	ctx := source.WithAccessToken(r.Context(), payload.AccessToken)
+	sel, err := s.buildSelectionForCommit(ctx, payload.Owner, payload.Repo, payload.Commit, payload.Preset, payload.Adhoc)
 	if err != nil {
 		s.writeAPIError(w, err)
 		return
@@ -654,7 +655,7 @@ func (s *Server) buildDownloadURL(r *http.Request, req downloadRequest) (string,
 			values := url.Values{}
 			values.Set(privateDownloadTokenParam, privateToken)
 			expiresAt := expiresAt
-			return requestBaseURL(r) + "/api/downloads/private.zip?" + values.Encode(), &expiresAt
+			return "/api/downloads/private.zip?" + values.Encode(), &expiresAt
 		}
 	}
 
@@ -682,7 +683,7 @@ func (s *Server) buildDownloadURL(r *http.Request, req downloadRequest) (string,
 	if encoded := values.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	return requestBaseURL(r) + path, nil
+	return path, nil
 }
 
 func (s *Server) resolveCommit(ctx context.Context, owner, repo, ref string) (string, error) {
@@ -958,23 +959,4 @@ func manifestEntryPaths(entries []source.Entry, limit int) ([]string, bool) {
 		out = append(out, entry.Path)
 	}
 	return out, true
-}
-
-func requestBaseURL(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-
-	scheme := "http"
-	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
-		scheme = forwardedProto
-	} else if r.TLS != nil {
-		scheme = "https"
-	}
-
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
-	return scheme + "://" + host
 }
