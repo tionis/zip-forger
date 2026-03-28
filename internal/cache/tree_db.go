@@ -156,11 +156,17 @@ func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Cri
 	if len(criteria.PathPrefixes) > 0 {
 		var prefixParts []string
 		for _, p := range criteria.PathPrefixes {
+			p = strings.TrimRight(p, "/")
+			if p == "" {
+				continue
+			}
 			// Strict directory prefix matching: either the path is the prefix, or it starts with "prefix/"
 			prefixParts = append(prefixParts, "(full_path = ? OR full_path LIKE ?)")
 			args = append(args, p, p+"/%")
 		}
-		whereParts = append(whereParts, "("+strings.Join(prefixParts, " OR ")+")")
+		if len(prefixParts) > 0 {
+			whereParts = append(whereParts, "("+strings.Join(prefixParts, " OR ")+")")
+		}
 	}
 
 	if len(criteria.Extensions) > 0 {

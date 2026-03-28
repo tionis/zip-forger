@@ -647,32 +647,32 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 			}
 
 			for _, node := range tree.Tree {
-				// We store ONLY the immediate name in the path column.
-				// The DB's Recursive CTE will rebuild the full paths.
+				// Normalize the name: we want ONLY the immediate name (basename)
+				// to be stored in the 'path' column so the Recursive CTE can 
+				// join them correctly.
+				name := path.Base(normalizePath(node.Path))
+				if name == "" || name == "." {
+					continue
+				}
+
+				// Prepare for DB storage
 				entriesToSave = append(entriesToSave, struct {
 					Path string
 					Type string
 					Size int64
 					SHA  string
-				}{Path: node.Path, Type: node.Type, Size: node.Size, SHA: node.SHA})
+				}{Path: name, Type: node.Type, Size: node.Size, SHA: node.SHA})
 
-				fullPath := node.Path
+				fullPath := name
 				if task.path != "" {
-					fullPath = task.path + "/" + node.Path
+					fullPath = task.path + "/" + name
 				}
 
-				if node.Type == "tree" && node.SHA != "" {
-					// Optimization: only traverse into directories that could match our prefixes.
-					shouldTraverse := len(criteria.PathPrefixes) == 0
-					for _, p := range criteria.PathPrefixes {
-						if p == "" || fullPath == p || strings.HasPrefix(fullPath, p+"/") || strings.HasPrefix(p, fullPath+"/") {
-							shouldTraverse = true
-							break
-						}
-					}
-					if shouldTraverse {
-						spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
-					}
+				if node.Type == "blob" {
+					// We dont need to add to 'out' here because we will 
+					// search the DB at the end.
+				} else if node.Type == "tree" && node.SHA != "" {
+					spawnTask(treeTask{path: fullPath, sha: node.SHA, isRoot: false})
 				}
 			}
 

@@ -122,29 +122,27 @@ func TestForgejoResolveListAndOpen(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/branches/main":
 					return response(http.StatusOK, `{"commit":{"id":"commit-sha"}}`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "true":
-					return response(http.StatusOK, `{
-  "sha":"commit-sha",
-  "truncated":false,
-  "tree":[
-    {"path":"rules/core","type":"tree"},
-    {"path":"rules/core/guide.pdf","type":"blob","size":12},
-    {"path":"rules/core/notes.txt","type":"blob","size":9}
-  ]
-}`), nil
-
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/commit-sha" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
   "sha":"commit-sha",
   "truncated":false,
   "tree":[
-    {"path":"rules/core","type":"tree", "sha":"sub-sha"}
+    {"path":"rules","type":"tree", "sha":"sub-sha-rules"}
   ]
 }`), nil
 
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha" && r.URL.Query().Get("recursive") == "":
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha-rules" && r.URL.Query().Get("recursive") == "":
 					return response(http.StatusOK, `{
-  "sha":"sub-sha",
+  "sha":"sub-sha-rules",
+  "truncated":false,
+  "tree":[
+    {"path":"core","type":"tree", "sha":"sub-sha-core"}
+  ]
+}`), nil
+
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/rules/git/trees/sub-sha-core" && r.URL.Query().Get("recursive") == "":
+					return response(http.StatusOK, `{
+  "sha":"sub-sha-core",
   "truncated":false,
   "tree":[
     {"path":"guide.pdf","type":"blob","size":12},
