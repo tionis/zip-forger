@@ -19,7 +19,7 @@ import (
 func main() {
 	if len(os.Args) < 4 {
 		fmt.Println("Usage: zf-debug <base_url> <owner/repo> <ref> [prefix] [extension]")
-		fmt.Println("Example: zf-debug https://forge.tionis.dev tionis/zip-forger main internal .go")
+		fmt.Println("Example: zf-debug https://forge.tionis.dev GSB/systems main Amber")
 		os.Exit(1)
 	}
 
@@ -91,6 +91,9 @@ func main() {
 		if ctx.Err() != nil {
 			fmt.Fprintf(os.Stderr, "Context Error: %v\n", ctx.Err())
 		}
+		
+		// Still print stats even on failure
+		printDBStats(db.RawDB(), sha)
 		os.Exit(1)
 	}
 
@@ -104,24 +107,35 @@ func main() {
 		fmt.Printf("[%d] %s (%d bytes)\n", i+1, e.Path, e.Size)
 	}
 
-	// Internal DB state check using a raw connection
-	rawDB, err := sql.Open("sqlite", dbPath)
-	if err == nil {
-		defer rawDB.Close()
-		var count int
-		_ = rawDB.QueryRow("SELECT COUNT(*) FROM tree_entries").Scan(&count)
-		fmt.Printf("\n--- DB Stats ---\n")
-		fmt.Printf("Total entries in tree_entries table: %d\n", count)
-		
-		fmt.Printf("\n--- Root Level Samples ---\n")
-		rows, _ := rawDB.Query("SELECT path, type, sha FROM tree_entries WHERE parent_tree_sha = ? LIMIT 5", sha)
-		if rows != nil {
-			defer rows.Close()
-			for rows.Next() {
-				var p, t, s string
-				_ = rows.Scan(&p, &t, &s)
-				fmt.Printf("  -> %s [%s] (sha: %s)\n", p, t, s)
-			}
+	printDBStats(db.RawDB(), sha)
+}
+
+func printDBStats(rawDB *sql.DB, sha string) {
+	if rawDB == nil {
+		return
+	}
+	var count int
+	_ = rawDB.QueryRow("SELECT COUNT(*) FROM tree_entries").Scan(&count)
+	fmt.Printf("\n--- DB Stats ---\n")
+	fmt.Printf("Total entries in tree_entries table: %d\n", count)
+	
+	fmt.Printf("\n--- Root Level Samples (Parent SHA: %s) ---\n", sha)
+	rows, err := rawDB.Query("SELECT path, type, sha FROM tree_entries WHERE parent_tree_sha = ? LIMIT 10", sha)
+	if err != nil {
+		fmt.Printf("Error querying root samples: %v\n", err)
+		return
+	}
+	if rows != nil {
+		defer rows.Close()
+		found := false
+		for rows.Next() {
+			found = true
+			var p, t, s string
+			_ = rows.Scan(&p, &t, &s)
+			fmt.Printf("  -> %s [%s] (sha: %s)\n", p, t, s)
+		}
+		if !found {
+			fmt.Println("  (No entries found for this parent SHA)")
 		}
 	}
 }

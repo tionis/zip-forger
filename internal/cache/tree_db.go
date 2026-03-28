@@ -76,6 +76,8 @@ func (c *TreeDB) IsIndexed(ctx context.Context, sha string) (bool, error) {
 }
 
 func (c *TreeDB) MarkIndexed(ctx context.Context, sha string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	_, err := c.db.ExecContext(ctx, "INSERT OR IGNORE INTO indexed_trees (sha) VALUES (?)", sha)
 	return err
 }
@@ -86,6 +88,8 @@ func (c *TreeDB) SaveEntries(ctx context.Context, parentSHA string, entries []st
 	Size int64
 	SHA  string
 }) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -237,6 +241,10 @@ func (c *TreeDB) Search(ctx context.Context, rootSHA string, criteria filter.Cri
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+func (c *TreeDB) RawDB() *sql.DB {
+	return c.db
 }
 
 func (c *TreeDB) Close() error {
