@@ -145,7 +145,7 @@ func buildAuthManager(mode string, required bool, forgejoBaseURL string, logger 
 			return nil, errors.New("ZIP_FORGER_OAUTH_REDIRECT_URL is required for forgejo-oauth mode")
 		}
 
-		scopes := parseCSV(getenv("ZIP_FORGER_OAUTH_SCOPES", "read:repository"))
+		scopes := parseCSV(getenv("ZIP_FORGER_OAUTH_SCOPES", "read:repository,read:user,write:repository"))
 		return auth.NewManager(auth.Config{
 			Enabled:        true,
 			Required:       required,

@@ -346,7 +346,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     <header class="header">
       <div class="header-left">
         <h1 class="title">zip-forger</h1>
-        <span class="auth-badge" id="authBadge">checking...</span>
+        <span class="auth-badge" id="authBadge">checking...</span><p id="message" class="message" style="margin-left:12px; font-weight:500;"></p>
         <a class="btn ghost" id="loginBtn" href="/auth/login" hidden>Sign in</a>
         <button class="ghost" id="logoutBtn" type="button" hidden>Sign out</button>
       </div>
@@ -416,7 +416,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button class="ghost" id="previewBtn" type="button">Preview</button>
                 <button class="btn-download" id="downloadBtn" type="button" disabled>Download ZIP</button>
-                <p id="message" class="message"></p>
+                
               </div>
               
               <div id="indexProgress" hidden>
