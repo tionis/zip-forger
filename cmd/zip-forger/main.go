@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,15 @@ import (
 )
 
 func main() {
+	cacheDir := getenv("ZIP_FORGER_CACHE_DIR", "./.cache/zip-forger")
+	treeDB, err := cache.NewTreeDB(filepath.Join(cacheDir, "trees.db"), nil)
+	if err != nil {
+		log.Fatalf("failed to initialize tree database: %v", err)
+	}
+	defer treeDB.Close()
+
+	progressManager := app.NewProgressManager()
+
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
 	addr := getenv("ZIP_FORGER_ADDR", ":8080")
@@ -26,7 +36,7 @@ func main() {
 	repoRoot := getenv("ZIP_FORGER_REPO_ROOT", "./mock-repos")
 	forgejoBaseURL := getenv("ZIP_FORGER_FORGEJO_BASE_URL", "")
 
-	repoSource, err := buildSource(sourceType, repoRoot, forgejoBaseURL)
+	repoSource, err := buildSource(sourceType, repoRoot, forgejoBaseURL, treeDB, progressManager)
 	if err != nil {
 		logger.Fatalf("source setup failed: %v", err)
 	}
@@ -45,6 +55,7 @@ func main() {
 		Source:        repoSource,
 		ManifestCache: cache.NewManifestCache(5*time.Minute, 1024),
 		Auth:          authManager,
+		Progress:      progressManager,
 		Logger:        logger,
 	})
 
@@ -95,7 +106,7 @@ func getenv(key, fallback string) string {
 	return value
 }
 
-func buildSource(sourceType, repoRoot, forgejoBaseURL string) (source.RepositorySource, error) {
+func buildSource(sourceType, repoRoot, forgejoBaseURL string, treeDB *cache.TreeDB, progress *app.ProgressManager) (source.RepositorySource, error) {
 	switch sourceType {
 	case "local":
 		return source.NewLocalFS(repoRoot), nil
@@ -105,6 +116,8 @@ func buildSource(sourceType, repoRoot, forgejoBaseURL string) (source.Repository
 			HTTPClient: &http.Client{
 				Timeout: 60 * time.Second,
 			},
+			TreeDB:     treeDB,
+			OnProgress: progress.Notify,
 		})
 	default:
 		return nil, fmt.Errorf("unknown ZIP_FORGER_SOURCE value %q (expected local or forgejo)", sourceType)

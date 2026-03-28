@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,7 @@ type Dependencies struct {
 	Source        source.RepositorySource
 	ManifestCache *cache.ManifestCache
 	Auth          *auth.Manager
+	Progress      *ProgressManager
 	Logger        *log.Logger
 }
 
@@ -36,6 +38,7 @@ type Server struct {
 	source        source.RepositorySource
 	manifestCache *cache.ManifestCache
 	auth          *auth.Manager
+	progress      *ProgressManager
 	logger        *log.Logger
 }
 
@@ -136,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	mux.Handle("GET /api/repos/search", searchReposHandler)
+	mux.Handle("GET /api/repos/{owner}/{repo}/index-progress", http.HandlerFunc(s.progress.HandleSSE))
 	mux.Handle("GET /api/repos/{owner}/{repo}/branches", branchesHandler)
 	mux.Handle("POST /api/repos/{owner}/{repo}/preview", previewHandler)
 	mux.Handle("GET /api/repos/{owner}/{repo}/download.zip", downloadHandler)
@@ -294,7 +298,14 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		message = "chore(zip-forger): update .zip-forger.yaml"
 	}
 
-	if err := s.source.UpsertFile(r.Context(), owner, repo, branch, config.FileName, data, message); err != nil {
+	// Fetch current SHA to prevent accidental overwrites
+	currentSHA, err := s.source.GetFileSHA(r.Context(), owner, repo, branch, config.FileName)
+	if err != nil && !errors.Is(err, source.ErrNotFound) {
+		s.writeAPIError(w, sourceErrorToAPI(err, "unable to fetch current config SHA"))
+		return
+	}
+
+	if err := s.source.UpsertFile(r.Context(), owner, repo, branch, config.FileName, data, message, currentSHA); err != nil {
 		s.writeAPIError(w, sourceErrorToAPI(err, "unable to save repository config"))
 		return
 	}
@@ -342,6 +353,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	archiveName := sanitizeFilename(fmt.Sprintf("%s-%s.zip", repo, shortRef(sel.Commit)))
+	w.Header().Set("X-Zip-Total-Size", strconv.FormatInt(sel.Manifest.TotalBytes, 10))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
 	w.Header().Set("Cache-Control", "no-store")

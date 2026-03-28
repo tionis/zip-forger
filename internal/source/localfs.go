@@ -177,7 +177,11 @@ func (s *LocalFS) ListBranches(_ context.Context, owner, repo string) ([]string,
 	return out, nil
 }
 
-func (s *LocalFS) UpsertFile(_ context.Context, owner, repo, branch, filePath string, data []byte, _ string) error {
+func (s *LocalFS) GetFileSHA(_ context.Context, owner, repo, branch, filePath string) (string, error) {
+	return "", nil
+}
+
+func (s *LocalFS) UpsertFile(_ context.Context, owner, repo, branch, filePath string, data []byte, _, _ string) error {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		branch = "main"

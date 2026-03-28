@@ -64,7 +64,7 @@ func NewManager(cfg Config, logger *log.Logger) (*Manager, error) {
 		cfg.StateTTL = 10 * time.Minute
 	}
 	if len(cfg.Scopes) == 0 {
-		cfg.Scopes = []string{"read:repository", "read:user"}
+		cfg.Scopes = []string{"read:repository", "read:user", "write:repository"}
 	}
 
 	manager := &Manager{

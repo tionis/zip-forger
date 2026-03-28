@@ -374,14 +374,14 @@ func TestForgejoListAndUpsertHelpers(t *testing.T) {
 	}
 
 	configYAML := []byte("version: 1\n")
-	if err := client.UpsertFile(ctx, "acme", "rules", "main", ".zip-forger.yaml", configYAML, "update"); err != nil {
+	if err := client.UpsertFile(ctx, "acme", "rules", "main", ".zip-forger.yaml", configYAML, "update", "current-sha"); err != nil {
 		t.Fatalf("UpsertFile failed: %v", err)
 	}
 
 	if putPayload["branch"] != "main" {
 		t.Fatalf("unexpected branch payload: %#v", putPayload)
 	}
-	if putPayload["sha"] != "existing-sha" {
+	if putPayload["sha"] != "current-sha" {
 		t.Fatalf("unexpected sha payload: %#v", putPayload)
 	}
 	content, _ := putPayload["content"].(string)
@@ -420,7 +420,7 @@ func TestForgejoUpsertFileCreatesWithPost(t *testing.T) {
 
 	ctx := WithAccessToken(context.Background(), "tok-123")
 	configYAML := []byte("version: 1\n")
-	if err := client.UpsertFile(ctx, "acme", "rules", "main", ".zip-forger.yaml", configYAML, "create"); err != nil {
+	if err := client.UpsertFile(ctx, "acme", "rules", "main", ".zip-forger.yaml", configYAML, "create", ""); err != nil {
 		t.Fatalf("UpsertFile failed: %v", err)
 	}
 

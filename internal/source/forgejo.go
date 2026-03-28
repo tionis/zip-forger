@@ -27,6 +27,7 @@ type ForgejoConfig struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	TreeDB     TreeDB
+	OnProgress func(owner, repo, commit string, count int64)
 }
 
 type TreeDB interface {
@@ -43,9 +44,10 @@ type TreeDB interface {
 }
 
 type Forgejo struct {
-	baseURL string
-	client  *http.Client
-	db      TreeDB
+	baseURL    string
+	client     *http.Client
+	db         TreeDB
+	onProgress func(owner, repo, commit string, count int64)
 }
 
 func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
@@ -60,9 +62,10 @@ func NewForgejo(cfg ForgejoConfig) (*Forgejo, error) {
 	}
 
 	return &Forgejo{
-		baseURL: baseURL,
-		client:  client,
-		db:      cfg.TreeDB,
+		baseURL:    baseURL,
+		client:     client,
+		db:         cfg.TreeDB,
+		onProgress: cfg.OnProgress,
 	}, nil
 }
 
@@ -234,7 +237,7 @@ func (s *Forgejo) ListBranches(ctx context.Context, owner, repo string) ([]strin
 	return out, nil
 }
 
-func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message string) error {
+func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message, sha string) error {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		branch = "main"
@@ -246,14 +249,6 @@ func (s *Forgejo) UpsertFile(ctx context.Context, owner, repo, branch, filePath 
 	message = strings.TrimSpace(message)
 	if message == "" {
 		message = "chore(zip-forger): update " + filePath
-	}
-
-	sha, err := s.getFileSHA(ctx, owner, repo, branch, filePath)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, ErrNotFound) {
-		sha = ""
 	}
 
 	requestPayload := map[string]any{
@@ -696,10 +691,11 @@ func (s *Forgejo) listFilesByTrees(ctx context.Context, owner, repo, commit stri
 							if node.Type == "blob" {
 								c := atomic.AddInt64(&count, 1)
 								if c%1000 == 0 {
-									log.Printf("[INDEXER] Progress: %d files discovered...", c)
+									if s.onProgress != nil {
+										s.onProgress(owner, repo, commit, c)
+									}
 								}
-							} else if node.Type == "tree" && node.SHA != "" {
-								atomic.AddInt32(&activeTasks, 1)
+							} else if node.Type == "tree" && node.SHA != "" {								atomic.AddInt32(&activeTasks, 1)
 								tasks <- treeTask{path: fullPath, sha: node.SHA, isRoot: false}
 							}
 						}
@@ -838,7 +834,7 @@ func normalizePath(value string) string {
 	return value
 }
 
-func (s *Forgejo) getFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error) {
+func (s *Forgejo) GetFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error) {
 	endpoint := fmt.Sprintf("%s/api/v1/repos/%s/%s/contents/%s?ref=%s",
 		s.baseURL,
 		url.PathEscape(owner),

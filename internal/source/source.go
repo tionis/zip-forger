@@ -24,5 +24,6 @@ type RepositorySource interface {
 	OpenFile(ctx context.Context, owner, repo, commit, filePath string) (io.ReadCloser, error)
 	SearchRepos(ctx context.Context, query string) ([]string, error)
 	ListBranches(ctx context.Context, owner, repo string) ([]string, error)
-	UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message string) error
+	GetFileSHA(ctx context.Context, owner, repo, branch, filePath string) (string, error)
+	UpsertFile(ctx context.Context, owner, repo, branch, filePath string, data []byte, message, sha string) error
 }

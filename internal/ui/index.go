@@ -81,7 +81,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       animation: reveal 280ms ease-out;
     }
 
-    /* ---- Header ---- */
     .header {
       display: flex;
       justify-content: space-between;
@@ -107,12 +106,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     }
 
     :root[data-theme="dark"] .title { color: var(--brand); }
-
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
 
     .auth-badge {
       font-size: 0.78rem;
@@ -151,27 +144,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       background: rgba(109, 219, 150, 0.08);
     }
     :root[data-theme="dark"] .auth-badge.state-signed-in::before { background: #6ddb96; }
-
-    .auth-badge.state-warning {
-      color: #7a4d0f;
-      border-color: rgba(122, 77, 15, 0.3);
-      background: rgba(122, 77, 15, 0.07);
-    }
-    .auth-badge.state-warning::before { background: var(--warn); }
-
-    :root[data-theme="dark"] .auth-badge.state-warning {
-      color: var(--warn);
-      border-color: rgba(226, 167, 101, 0.25);
-      background: rgba(226, 167, 101, 0.08);
-    }
-    :root[data-theme="dark"] .auth-badge.state-warning::before { background: var(--warn); }
-
-    .auth-badge.state-error {
-      color: var(--danger);
-      border-color: rgba(158, 47, 58, 0.3);
-      background: var(--danger-soft);
-    }
-    .auth-badge.state-error::before { background: var(--danger); }
 
     .auth-banner {
       display: none;
@@ -214,7 +186,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       background: var(--brand);
     }
 
-    /* ---- Tabs ---- */
     .tab-bar {
       display: flex;
       gap: 2px;
@@ -237,25 +208,18 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       min-height: auto;
     }
 
-    .tab-btn:hover {
-      color: var(--text-secondary);
-      transform: none;
-      filter: none;
-    }
+    .tab-btn:hover { color: var(--text-secondary); }
 
     .tab-btn.active {
       color: var(--brand-strong);
       border-bottom-color: var(--brand);
     }
 
-    :root[data-theme="dark"] .tab-btn.active {
-      color: var(--brand);
-    }
+    :root[data-theme="dark"] .tab-btn.active { color: var(--brand); }
 
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
-    /* ---- Cards ---- */
     .card {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -274,7 +238,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       margin-bottom: 12px;
     }
 
-    /* ---- Layout ---- */
     .dl-layout {
       display: grid;
       grid-template-columns: 380px 1fr;
@@ -282,43 +245,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       align-items: start;
     }
 
-    .dl-sidebar {
-      display: grid;
-      gap: 12px;
-      position: sticky;
-      top: 20px;
-    }
-
-    .dl-main {
-      display: grid;
-      gap: 12px;
-    }
-
+    .dl-sidebar { display: grid; gap: 12px; position: sticky; top: 20px; }
+    .dl-main { display: grid; gap: 12px; }
     .grid { display: grid; gap: 10px; }
+    .row-2 { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 
-    .row-2 {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: 1fr 1fr;
-    }
-
-    .row-3 {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    /* ---- Forms ---- */
-    label {
-      display: grid;
-      gap: 4px;
-      font-size: 0.82rem;
-      font-weight: 500;
-      color: var(--muted);
-    }
-
+    label { display: grid; gap: 4px; font-size: 0.82rem; font-weight: 500; color: var(--muted); }
     input, select, textarea, button { font: inherit; }
-
     input, select, textarea {
       width: 100%;
       border: 1px solid var(--line);
@@ -328,42 +261,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       color: var(--text);
       outline: none;
       font-size: 0.88rem;
-      transition: border-color 100ms, box-shadow 100ms;
     }
 
-    :root[data-theme="dark"] input,
-    :root[data-theme="dark"] select,
-    :root[data-theme="dark"] textarea {
+    :root[data-theme="dark"] input, :root[data-theme="dark"] select, :root[data-theme="dark"] textarea {
       background: rgba(12, 18, 16, 0.75);
     }
 
-    input:focus, select:focus, textarea:focus {
-      border-color: var(--brand);
-      box-shadow: 0 0 0 2px rgba(67, 97, 184, 0.18);
-    }
-
-    textarea {
-      min-height: 62px;
-      resize: vertical;
-      line-height: 1.4;
-    }
-
-    select[size] {
-      height: auto;
-      padding: 4px 6px;
-    }
-
-    .check {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 0.86rem;
-      color: var(--muted);
-    }
-
-    .check input { width: auto; margin: 0; }
-
-    /* ---- Buttons ---- */
     button, .btn {
       border: 1px solid transparent;
       border-radius: var(--radius-sm);
@@ -372,7 +275,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       text-decoration: none;
       font-weight: 500;
       font-size: 0.86rem;
-      transition: transform 80ms, filter 80ms, opacity 80ms;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -380,116 +282,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       min-height: 34px;
     }
 
-    button:hover:not(:disabled), .btn:hover:not(:disabled) {
-      transform: translateY(-1px);
-      filter: brightness(1.04);
-    }
-
-    button:disabled, .btn:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-      transform: none;
-      filter: none;
-    }
-
-    .primary {
-      color: #fff;
-      background: var(--brand);
-    }
-
-    .ghost {
-      color: var(--brand-strong);
-      background: var(--surface-alt);
-      border-color: var(--line);
-    }
-
+    .primary { color: #fff; background: var(--brand); }
+    .ghost { color: var(--brand-strong); background: var(--surface-alt); border-color: var(--line); }
     :root[data-theme="dark"] .ghost { color: var(--brand); }
-
-    .warn-btn {
-      color: #fff;
-      background: var(--warn);
-    }
-
-    .danger-btn {
-      color: #fff;
-      background: var(--danger);
-      font-size: 0.8rem;
-      padding: 4px 10px;
-      min-height: 28px;
-    }
-
-    .btn-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .btn-download {
-      color: #fff;
-      background: var(--brand-strong);
-      font-size: 0.92rem;
-      padding: 9px 20px;
-      min-height: 38px;
-      border-radius: var(--radius-sm);
-      font-weight: 600;
-      letter-spacing: 0.2px;
-    }
-
+    .danger-btn { color: #fff; background: var(--danger); font-size: 0.8rem; padding: 4px 10px; min-height: 28px; }
+    .btn-download { color: #fff; background: var(--brand-strong); font-size: 0.92rem; padding: 9px 20px; min-height: 38px; font-weight: 600; }
     :root[data-theme="dark"] .btn-download { background: var(--brand); color: #111118; }
 
-    /* ---- Message ---- */
-    .message {
-      min-height: 1rem;
-      color: var(--muted);
-      font-size: 0.86rem;
-    }
-
+    .message { min-height: 1rem; color: var(--muted); font-size: 0.86rem; }
     .message.ok { color: var(--brand-strong); }
     :root[data-theme="dark"] .message.ok { color: var(--brand); }
-    .message.warn { color: var(--warn); }
     .message.err { color: var(--danger); }
 
-    .hint {
-      color: var(--muted);
-      font-size: 0.82rem;
-    }
+    .stats-bar { display: flex; gap: 16px; padding: 8px 0; font-size: 0.84rem; }
+    .stat-label { color: var(--muted); text-transform: uppercase; font-size: 0.72rem; font-weight: 600; }
+    .stat-value { color: var(--text-secondary); font-family: "JetBrains Mono", monospace; }
 
-    .small {
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-
-    /* ---- Stats bar ---- */
-    .stats-bar {
-      display: flex;
-      gap: 16px;
-      align-items: baseline;
-      flex-wrap: wrap;
-      padding: 8px 0;
-      font-size: 0.84rem;
-    }
-
-    .stat-item {
-      display: flex;
-      gap: 5px;
-      align-items: baseline;
-    }
-
-    .stat-label {
-      color: var(--muted);
-      text-transform: uppercase;
-      font-size: 0.72rem;
-      letter-spacing: 0.4px;
-      font-weight: 600;
-    }
-
-    .stat-value {
-      color: var(--text-secondary);
-      font-family: "JetBrains Mono", monospace;
-      font-size: 0.82rem;
-    }
-
-    /* ---- Tree ---- */
     .tree {
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
@@ -498,122 +306,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       max-height: calc(100vh - 320px);
       overflow: auto;
       padding: 12px 14px;
-      font-family: "JetBrains Mono", "Cascadia Mono", monospace;
-      font-size: 0.78rem;
-      line-height: 1.55;
-      white-space: pre;
-      color: var(--text-secondary);
-    }
-
-    .tree-empty {
-      color: var(--muted);
-      font-family: "DM Sans", sans-serif;
-      font-style: italic;
-      font-size: 0.86rem;
-      white-space: normal;
-      padding: 32px 16px;
-      text-align: center;
-    }
-
-    /* ---- Repo summary ---- */
-    .repo-summary {
       font-family: "JetBrains Mono", monospace;
-      font-size: 0.8rem;
-      color: var(--brand-strong);
-      background: var(--brand-soft);
-      border: 1px solid rgba(67, 97, 184, 0.2);
-      border-radius: var(--radius-sm);
-      padding: 6px 10px;
+      font-size: 0.78rem;
+      white-space: pre;
+      overflow-x: auto;
+      overflow-wrap: break-word;
     }
 
-    :root[data-theme="dark"] .repo-summary {
-      color: var(--brand);
-      border-color: rgba(123, 156, 244, 0.2);
-    }
+    .repo-summary { font-family: "JetBrains Mono", monospace; font-size: 0.8rem; color: var(--brand-strong); background: var(--brand-soft); border: 1px solid rgba(67, 97, 184, 0.2); border-radius: var(--radius-sm); padding: 6px 10px; }
+    :root[data-theme="dark"] .repo-summary { color: var(--brand); border-color: rgba(123, 156, 244, 0.2); }
 
-    /* ---- Share row ---- */
-    .share-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 6px;
-      align-items: end;
-    }
+    .index-bar-bg { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:4px; }
+    .index-bar-fill { height:100%; width:0; background:var(--brand); transition: width 0.3s; }
 
-    /* ---- Preview header ---- */
-    .preview-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
-    }
-
-    /* ---- Config editor ---- */
-    .config-layout {
-      max-width: 720px;
-    }
-
-    .preset-list {
-      display: grid;
-      gap: 10px;
-      margin-top: 10px;
-    }
-
-    .preset {
-      border: 1px solid var(--line);
-      border-radius: var(--radius-sm);
-      background: var(--surface-alt);
-      padding: 12px;
-      display: grid;
-      gap: 8px;
-    }
-
-    .preset-head {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .preset-head strong {
-      font-size: 0.88rem;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    /* ---- Responsive ---- */
     @media (max-width: 840px) {
       .dl-layout { grid-template-columns: 1fr; }
       .dl-sidebar { position: static; }
-      .row-2, .row-3 { grid-template-columns: 1fr; }
-      .share-row { grid-template-columns: 1fr; }
-      .tree { max-height: 50vh; }
-    }
-
-    @keyframes reveal {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .spinner {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 600ms linear infinite;
-      vertical-align: middle;
-    }
-
-    .spinner-dark {
-      border-color: rgba(0,0,0,0.15);
-      border-top-color: var(--brand);
     }
   </style>
 </head>
@@ -623,11 +331,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       <div class="header-left">
         <h1 class="title">zip-forger</h1>
         <span class="auth-badge" id="authBadge">checking...</span>
-        <a class="btn ghost" id="loginBtn" href="/auth/login?return_to=/" hidden style="font-size:0.8rem;padding:4px 10px;min-height:26px;">Sign in</a>
-        <button class="ghost" id="logoutBtn" type="button" hidden style="font-size:0.8rem;padding:4px 10px;min-height:26px;">Sign out</button>
+        <a class="btn ghost" id="loginBtn" href="/auth/login" hidden>Sign in</a>
+        <button class="ghost" id="logoutBtn" type="button" hidden>Sign out</button>
       </div>
       <div class="header-right">
-        <div class="theme-toggle" role="group" aria-label="theme mode">
+        <div class="theme-toggle">
           <button class="theme-btn" type="button" data-theme="system">Sys</button>
           <button class="theme-btn" type="button" data-theme="light">Light</button>
           <button class="theme-btn" type="button" data-theme="dark">Dark</button>
@@ -635,18 +343,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       </div>
     </header>
 
-    <div class="auth-banner" id="authBanner">
-      Authentication is required to use this service. Please sign in.
-      <a class="btn ghost" id="bannerLoginBtn" href="/auth/login?return_to=/" style="font-size:0.8rem;padding:4px 10px;min-height:26px;margin-left:auto;">Sign in</a>
-    </div>
+    <div class="auth-banner" id="authBanner">Authentication is required.</div>
 
-    <nav class="tab-bar" role="tablist">
-      <button class="tab-btn active" type="button" role="tab" data-tab="download" aria-selected="true">Download</button>
-      <button class="tab-btn" type="button" role="tab" data-tab="configure" aria-selected="false">Configure</button>
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="download">Download</button>
+      <button class="tab-btn" data-tab="configure">Configure</button>
     </nav>
 
-    <!-- ==================== DOWNLOAD TAB ==================== -->
-    <div class="tab-panel active" id="panel-download" role="tabpanel">
+    <div class="tab-panel active" id="panel-download">
       <div class="dl-layout">
         <div class="dl-sidebar">
           <section class="card">
@@ -657,11 +361,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
                 <datalist id="repoOptions"></datalist>
               </label>
               <label>Branch / Ref
-                <input id="ref" list="branchOptions" value="main" autocomplete="off" placeholder="main" />
+                <input id="ref" list="branchOptions" value="main" autocomplete="off" />
                 <datalist id="branchOptions"></datalist>
               </label>
               <div id="repoSummary" class="repo-summary" hidden></div>
-              <button class="ghost" id="loadConfigBtn" type="button" style="justify-self:start;">Load config</button>
+              <button class="ghost" id="loadConfigBtn" type="button">Load config</button>
             </div>
           </section>
 
@@ -673,122 +377,72 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
                   <option value="">(none)</option>
                 </select>
               </label>
-              <p class="hint" id="presetHint">Load config to populate presets.</p>
-
-              <label class="check">
-                <input id="useAdhoc" type="checkbox" />
-                Ad-hoc filters
-              </label>
-
+              <label class="check"><input id="useAdhoc" type="checkbox" /> Ad-hoc filters</label>
               <div id="adhocFields" class="grid">
-                <div class="row-2">
-                  <label>Include globs
-                    <textarea id="includeGlobs" placeholder="**/*.pdf"></textarea>
-                  </label>
-                  <label>Exclude globs
-                    <textarea id="excludeGlobs" placeholder="**/*draft*"></textarea>
-                  </label>
-                </div>
-                <div class="row-2">
-                  <label>Extensions
-                    <input id="extensions" placeholder=".pdf, .md" />
-                  </label>
-                  <label>Path prefixes
-                    <input id="prefixes" placeholder="rules/core" />
-                  </label>
-                </div>
+                <textarea id="includeGlobs" placeholder="Include globs (one per line)"></textarea>
+                <textarea id="excludeGlobs" placeholder="Exclude globs (one per line)"></textarea>
+                <input id="extensions" placeholder="Extensions (e.g. .pdf, .md)" />
+                <input id="prefixes" placeholder="Path prefixes (e.g. src/)" />
               </div>
             </div>
           </section>
 
           <section class="card">
             <div class="card-title">Share</div>
-            <label>Download URL
-              <div class="share-row">
-                <input id="shareUrl" readonly />
-                <button class="ghost" id="copyUrlBtn" type="button">Copy</button>
-              </div>
-            </label>
+            <input id="shareUrl" readonly />
+            <button class="ghost" id="copyUrlBtn" type="button">Copy URL</button>
           </section>
         </div>
 
         <div class="dl-main">
           <section class="card">
-            <div class="preview-header">
-              <div class="btn-row">
+            <div class="grid">
+              <div style="display:flex; gap:8px; align-items:center;">
                 <button class="ghost" id="previewBtn" type="button">Preview</button>
                 <button class="btn-download" id="downloadBtn" type="button" disabled>Download ZIP</button>
+                <p id="message" class="message"></p>
               </div>
-              <p id="message" class="message">Ready.</p>
-            </div>
+              
+              <div id="indexProgress" hidden>
+                <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--muted);">
+                  <span>Indexing repository...</span>
+                  <span id="indexCount">0 files discovered</span>
+                </div>
+                <div class="index-bar-bg"><div id="indexBar" class="index-bar-fill"></div></div>
+              </div>
 
-            <div class="stats-bar">
-              <div class="stat-item">
-                <span class="stat-label">Commit</span>
-                <span class="stat-value" id="commitValue">&mdash;</span>
+              <div class="stats-bar">
+                <div class="stat-item"><span class="stat-label">Commit</span> <span class="stat-value" id="commitValue">&mdash;</span></div>
+                <div class="stat-item"><span class="stat-label">Files</span> <span class="stat-value" id="filesValue">0</span></div>
+                <div class="stat-item"><span class="stat-label">Size</span> <span class="stat-value" id="bytesValue">0 B</span></div>
               </div>
-              <div class="stat-item">
-                <span class="stat-label">Files</span>
-                <span class="stat-value" id="filesValue">0</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Size</span>
-                <span class="stat-value" id="bytesValue">0 B</span>
-              </div>
+              <div id="treeView" class="tree"></div>
             </div>
-
-            <div id="treeView" class="tree"><span class="tree-empty">Run a preview to see matched files.</span></div>
-            <p id="treeHint" class="small" style="margin-top:4px;"></p>
           </section>
         </div>
       </div>
     </div>
 
-    <!-- ==================== CONFIGURE TAB ==================== -->
-    <div class="tab-panel" id="panel-configure" role="tabpanel">
-      <div class="config-layout">
-        <section class="card">
-          <div class="card-title">Repository Config</div>
-          <p class="hint" style="margin-bottom:12px;">Edit <code>.zip-forger.yaml</code> presets and options, then save to the selected branch.</p>
-          <div class="grid">
-            <label class="check">
-              <input id="allowAdhocFilters" type="checkbox" />
-              Allow ad-hoc filters
-            </label>
-            <div class="row-2">
-              <label>Max files per download
-                <input id="maxFilesPerDownload" type="number" min="0" step="1" placeholder="0 = unlimited" />
-              </label>
-              <label>Max bytes per download
-                <input id="maxBytesPerDownload" type="number" min="0" step="1" placeholder="0 = unlimited" />
-              </label>
-            </div>
-
-            <div class="btn-row" style="margin-top:4px;">
-              <button class="ghost" id="addPresetBtn" type="button">Add preset</button>
-              <button class="primary" id="saveConfigBtn" type="button">Save config</button>
-            </div>
-
-            <div id="presetList" class="preset-list"></div>
+    <div class="tab-panel" id="panel-configure">
+      <div class="card" style="max-width:800px; margin:0 auto;">
+        <div class="card-title">Repository Configuration</div>
+        <div class="grid">
+          <label class="check"><input id="allowAdhocFilters" type="checkbox" /> Allow ad-hoc filters</label>
+          <div class="row-2">
+            <label>Max Files <input id="maxFilesPerDownload" type="number" /></label>
+            <label>Max Bytes <input id="maxBytesPerDownload" type="number" /></label>
           </div>
-        </section>
+          <button class="ghost" id="addPresetBtn" type="button">Add Preset</button>
+          <div id="presetList" class="grid"></div>
+          <button class="primary" id="saveConfigBtn" type="button">Save to Repository</button>
+        </div>
       </div>
     </div>
   </main>
 
   <script>
     (function () {
-      const AUTH_ENABLED = {{if .AuthEnabled}}true{{else}}false{{end}};
-      const AUTH_REQUIRED = {{if .AuthRequired}}true{{else}}false{{end}};
-      const THEME_KEY = "zip_forger.theme_mode";
-
-      const state = {
-        configLoaded: false,
-        config: null,
-        preview: null,
-        busy: false
-      };
-
+      const state = { busy: false, preview: null, config: null };
       const nodes = {
         repo: document.getElementById("repo"),
         repoOptions: document.getElementById("repoOptions"),
@@ -796,7 +450,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         branchOptions: document.getElementById("branchOptions"),
         repoSummary: document.getElementById("repoSummary"),
         preset: document.getElementById("preset"),
-        presetHint: document.getElementById("presetHint"),
         useAdhoc: document.getElementById("useAdhoc"),
         adhocFields: document.getElementById("adhocFields"),
         includeGlobs: document.getElementById("includeGlobs"),
@@ -813,14 +466,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         filesValue: document.getElementById("filesValue"),
         bytesValue: document.getElementById("bytesValue"),
         treeView: document.getElementById("treeView"),
-        treeHint: document.getElementById("treeHint"),
+        indexProgress: document.getElementById("indexProgress"),
+        indexCount: document.getElementById("indexCount"),
+        indexBar: document.getElementById("indexBar"),
         authBadge: document.getElementById("authBadge"),
         authBanner: document.getElementById("authBanner"),
-        bannerLoginBtn: document.getElementById("bannerLoginBtn"),
         loginBtn: document.getElementById("loginBtn"),
         logoutBtn: document.getElementById("logoutBtn"),
-        themeButtons: Array.from(document.querySelectorAll("[data-theme]")),
-        tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
         allowAdhocFilters: document.getElementById("allowAdhocFilters"),
         maxFilesPerDownload: document.getElementById("maxFilesPerDownload"),
         maxBytesPerDownload: document.getElementById("maxBytesPerDownload"),
@@ -829,685 +481,139 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         presetList: document.getElementById("presetList")
       };
 
-      nodes.useAdhoc.checked = true;
-      initTheme();
-      wireEvents();
-      hydrateAuth().then((authenticated) => {
-        if (!AUTH_REQUIRED || authenticated) {
-          initData();
-        }
-      });
-      updateShareURL();
-
-      /* ---- Loading state helpers ---- */
-      function withLoading(btn, label, fn) {
-        return async function () {
-          if (state.busy) return;
-          state.busy = true;
-          const original = btn.textContent;
-          btn.disabled = true;
-          btn.textContent = label;
-          try {
-            await fn();
-          } finally {
-            btn.disabled = false;
-            btn.textContent = original;
-            state.busy = false;
-            updateDownloadState();
-          }
+      let progressSource = null;
+      function startProgressTracking(owner, repo, commit) {
+        stopProgressTracking();
+        const url = "/api/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/index-progress?commit=" + encodeURIComponent(commit);
+        progressSource = new EventSource(url);
+        nodes.indexProgress.hidden = false;
+        nodes.indexBar.style.width = "0%";
+        progressSource.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+          nodes.indexCount.textContent = data.count.toLocaleString() + " files discovered";
+          const val = (Math.log10(data.count + 1) / 6) * 100;
+          nodes.indexBar.style.width = Math.min(val, 99) + "%";
         };
       }
 
-      function updateDownloadState() {
-        nodes.downloadBtn.disabled = !state.preview || state.busy;
+      function stopProgressTracking() {
+        if (progressSource) { progressSource.close(); progressSource = null; }
+        nodes.indexProgress.hidden = true;
       }
 
-      /* ---- Events ---- */
-      function wireEvents() {
-        nodes.loadConfigBtn.addEventListener("click", () => run(withLoading(nodes.loadConfigBtn, "Loading...", loadConfig)));
-        nodes.previewBtn.addEventListener("click", () => run(withLoading(nodes.previewBtn, "Loading...", previewSelection)));
-        nodes.downloadBtn.addEventListener("click", triggerDownload);
-        nodes.copyUrlBtn.addEventListener("click", copyShareURL);
-        nodes.logoutBtn.addEventListener("click", logout);
-        nodes.addPresetBtn.addEventListener("click", () => addPresetRow());
-        nodes.saveConfigBtn.addEventListener("click", () => run(withLoading(nodes.saveConfigBtn, "Saving...", saveConfig)));
-
-        nodes.repo.addEventListener("input", debounce(() => {
-          run(() => searchRepos(nodes.repo.value));
-        }, 300));
-        nodes.repo.addEventListener("change", () => { run(onRepoChanged); run(loadConfig); });
-        nodes.ref.addEventListener("change", () => { updateShareURL(); updateRepoSummary(); run(loadConfig); });
-        nodes.ref.addEventListener("input", () => { updateShareURL(); updateRepoSummary(); });
-        nodes.preset.addEventListener("change", updateShareURL);
-        nodes.useAdhoc.addEventListener("change", () => { updateAdhocVisibility(); updateShareURL(); });
-        nodes.includeGlobs.addEventListener("input", updateShareURL);
-        nodes.excludeGlobs.addEventListener("input", updateShareURL);
-        nodes.extensions.addEventListener("input", updateShareURL);
-        nodes.prefixes.addEventListener("input", updateShareURL);
-
-        nodes.themeButtons.forEach((button) => {
-          button.addEventListener("click", () => setThemeMode(button.dataset.theme));
-        });
-
-        nodes.tabButtons.forEach((button) => {
-          button.addEventListener("click", () => switchTab(button.dataset.tab));
-        });
-
-        updateAdhocVisibility();
-      }
-
-      function updateAdhocVisibility() {
-        nodes.adhocFields.style.display = nodes.useAdhoc.checked ? "grid" : "none";
-      }
-
-      function switchTab(tabId) {
-        nodes.tabButtons.forEach((btn) => {
-          const isActive = btn.dataset.tab === tabId;
-          btn.classList.toggle("active", isActive);
-          btn.setAttribute("aria-selected", String(isActive));
-        });
-        document.querySelectorAll(".tab-panel").forEach((panel) => {
-          panel.classList.toggle("active", panel.id === "panel-" + tabId);
-        });
-      }
-
-      async function run(fn) {
-        try {
-          await fn();
-        } catch (err) {
-          if (err && err.message) {
-            setMessage(err.message, "err");
-          }
+      async function apiFetch(url, opts = {}) {
+        const res = await fetch(url, opts);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.message || "Request failed: " + res.status);
         }
-      }
-
-      /* ---- Theme ---- */
-      function initTheme() {
-        const media = window.matchMedia("(prefers-color-scheme: dark)");
-        const current = localStorage.getItem(THEME_KEY) || "system";
-        applyTheme(current);
-        media.addEventListener("change", () => {
-          if ((localStorage.getItem(THEME_KEY) || "system") === "system") {
-            applyTheme("system");
-          }
-        });
-      }
-
-      function setThemeMode(mode) {
-        localStorage.setItem(THEME_KEY, mode);
-        applyTheme(mode);
-      }
-
-      function applyTheme(mode) {
-        const resolved = mode === "system"
-          ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-          : mode;
-        document.documentElement.dataset.theme = resolved;
-        nodes.themeButtons.forEach((button) => {
-          button.classList.toggle("active", button.dataset.theme === mode);
-        });
-      }
-
-      /* ---- Auth ---- */
-      function setAuthBadge(text, stateClass) {
-        nodes.authBadge.textContent = text;
-        nodes.authBadge.className = "auth-badge" + (stateClass ? " " + stateClass : "");
-      }
-
-      async function hydrateAuth() {
-        if (!AUTH_ENABLED) {
-          if (AUTH_REQUIRED) {
-            setAuthBadge("sign in required", "state-error");
-            nodes.authBanner.classList.add("visible");
-          } else {
-            setAuthBadge("no auth");
-          }
-          return !AUTH_REQUIRED;
-        }
-
-        const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-        nodes.loginBtn.href = "/auth/login?return_to=" + returnTo;
-        nodes.bannerLoginBtn.href = "/auth/login?return_to=" + returnTo;
-        nodes.loginBtn.hidden = false;
-
-        try {
-          const payload = await apiFetch("/auth/me", { credentials: "same-origin" });
-          if (payload.authenticated) {
-            setAuthBadge("signed in", "state-signed-in");
-            nodes.logoutBtn.hidden = false;
-            nodes.loginBtn.hidden = true;
-            return true;
-          } else if (AUTH_REQUIRED) {
-            setAuthBadge("sign in required", "state-error");
-            nodes.authBanner.classList.add("visible");
-            return false;
-          } else {
-            setAuthBadge("not signed in", "state-warning");
-            return true;
-          }
-        } catch (_err) {
-          setAuthBadge("auth unavailable", "state-error");
-          if (AUTH_REQUIRED) {
-            nodes.authBanner.classList.add("visible");
-          }
-          return false;
-        }
-      }
-
-      async function logout() {
-        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
-        window.location.reload();
-      }
-
-      /* ---- Data loading ---- */
-      async function initData() {
-        try {
-          await searchRepos("");
-        } catch (e) {
-          setMessage("Failed to load repositories: " + e.message, "error");
-        }
-      }
-
-      function currentSelection() {
-        const full = nodes.repo.value.trim();
-        const parts = full.split("/");
-        if (parts.length < 2) return null;
-        const owner = parts[0];
-        const repo = parts.slice(1).join("/");
-        const ref = nodes.ref.value.trim();
-        return { owner, repo, ref };
+        return res.json();
       }
 
       function updateRepoSummary() {
-        const sel = currentSelection();
-        if (sel) {
-          nodes.repoSummary.textContent = sel.owner + " / " + sel.repo + (sel.ref ? "  @  " + sel.ref : "");
-          nodes.repoSummary.hidden = false;
-        } else {
-          nodes.repoSummary.hidden = true;
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) { nodes.repoSummary.hidden = true; return; }
+        let text = parts[0] + " / " + parts[1] + (nodes.ref.value ? " @ " + nodes.ref.value : "");
+        if (state.preview) {
+          text += " (" + state.preview.selectedFiles.toLocaleString() + " files, " + formatBytes(state.preview.totalBytes) + ")";
         }
+        nodes.repoSummary.textContent = text;
+        nodes.repoSummary.hidden = false;
       }
 
-      async function searchRepos(q) {
-        const payload = await apiFetch("/api/repos/search?q=" + encodeURIComponent(q), { credentials: "same-origin" });
-        setDatalist(nodes.repoOptions, payload.repos || []);
-      }
-
-      async function onRepoChanged() {
-        updateShareURL();
-        updateRepoSummary();
-        const selected = currentSelection();
-        if (!selected) {
-          setDatalist(nodes.branchOptions, []);
-          return;
-        }
-        const payload = await apiFetch("/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/branches", { credentials: "same-origin" });
-        const branches = payload.branches || [];
-        setDatalist(nodes.branchOptions, branches);
-        if (branches.length && !nodes.ref.value) {
-          nodes.ref.value = branches[0];
-          updateShareURL();
-          updateRepoSummary();
-        }
-      }
-
-      async function loadConfig() {
-        const selected = currentSelection();
-        if (!selected) {
-          throw new Error("Owner and repository are required.");
-        }
-
-        const query = new URLSearchParams();
-        if (selected.ref) {
-          query.set("ref", selected.ref);
-        }
-        const endpoint = "/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/config?" + query.toString();
-        const payload = await apiFetch(endpoint, { credentials: "same-origin" });
-
-        state.configLoaded = true;
-        state.config = payload.config || { version: 1, options: { allowAdhocFilters: true }, presets: [] };
-        if (!state.config.options) {
-          state.config.options = { allowAdhocFilters: true };
-        }
-        if (!Array.isArray(state.config.presets)) {
-          state.config.presets = [];
-        }
-
-        nodes.commitValue.textContent = payload.commit || "\u2014";
-        nodes.allowAdhocFilters.checked = state.config.options.allowAdhocFilters !== false;
-        nodes.maxFilesPerDownload.value = formatLimitValue(state.config.options.maxFilesPerDownload);
-        nodes.maxBytesPerDownload.value = formatLimitValue(state.config.options.maxBytesPerDownload);
-        nodes.useAdhoc.disabled = state.config.options.allowAdhocFilters === false;
-        if (nodes.useAdhoc.disabled) {
-          nodes.useAdhoc.checked = false;
-          updateAdhocVisibility();
-        }
-
-        renderPresetSelect();
-        renderPresetEditor();
-        nodes.presetHint.textContent = state.config.presets.length > 0
-          ? state.config.presets.length + " preset(s) loaded."
-          : "No presets in config.";
-        setMessage("Config loaded.", "ok");
-      }
-
-      function renderPresetSelect() {
-        const selected = nodes.preset.value;
-        nodes.preset.innerHTML = "";
-        nodes.preset.appendChild(optionNode("", "(none)"));
-        for (const preset of state.config.presets) {
-          const label = preset.description ? preset.id + " \u2014 " + preset.description : preset.id;
-          nodes.preset.appendChild(optionNode(preset.id, label));
-        }
-        if (selected && state.config.presets.some((p) => p.id === selected)) {
-          nodes.preset.value = selected;
-        }
-        updateShareURL();
-      }
-
-      function renderPresetEditor() {
-        nodes.presetList.innerHTML = "";
-        if (!state.config || !state.config.presets.length) {
-          const empty = document.createElement("p");
-          empty.className = "small";
-          empty.textContent = "No presets yet.";
-          nodes.presetList.appendChild(empty);
-          return;
-        }
-
-        state.config.presets.forEach((preset, index) => {
-          nodes.presetList.appendChild(buildPresetRow(preset, index));
-        });
-      }
-
-      function buildPresetRow(preset, index) {
-        const wrapper = document.createElement("section");
-        wrapper.className = "preset";
-        wrapper.dataset.index = String(index);
-
-        const head = document.createElement("div");
-        head.className = "preset-head";
-        const title = document.createElement("strong");
-        title.textContent = preset.id || "new-preset";
-        const deleteButton = document.createElement("button");
-        deleteButton.className = "danger-btn";
-        deleteButton.type = "button";
-        deleteButton.textContent = "Delete";
-        deleteButton.addEventListener("click", () => {
-          state.config.presets.splice(index, 1);
-          renderPresetEditor();
-          renderPresetSelect();
-        });
-        head.appendChild(title);
-        head.appendChild(deleteButton);
-        wrapper.appendChild(head);
-
-        wrapper.appendChild(buildInputField("Preset ID", preset.id || "", (value) => {
-          state.config.presets[index].id = value.trim();
-          title.textContent = state.config.presets[index].id || "new-preset";
-          renderPresetSelect();
-        }));
-        wrapper.appendChild(buildInputField("Description", preset.description || "", (value) => {
-          state.config.presets[index].description = value.trim();
-          renderPresetSelect();
-        }));
-        wrapper.appendChild(buildTextAreaField("Include globs", joinList(preset.includeGlobs), (value) => {
-          state.config.presets[index].includeGlobs = splitList(value);
-        }));
-        wrapper.appendChild(buildTextAreaField("Exclude globs", joinList(preset.excludeGlobs), (value) => {
-          state.config.presets[index].excludeGlobs = splitList(value);
-        }));
-        wrapper.appendChild(buildInputField("Extensions", joinList(preset.extensions), (value) => {
-          state.config.presets[index].extensions = splitList(value);
-        }));
-        wrapper.appendChild(buildInputField("Path prefixes", joinList(preset.pathPrefixes), (value) => {
-          state.config.presets[index].pathPrefixes = splitList(value);
-        }));
-
-        return wrapper;
-      }
-
-      function buildInputField(labelText, value, onChange) {
-        const label = document.createElement("label");
-        label.textContent = labelText;
-        const input = document.createElement("input");
-        input.value = value || "";
-        input.addEventListener("input", () => onChange(input.value));
-        label.appendChild(input);
-        return label;
-      }
-
-      function buildTextAreaField(labelText, value, onChange) {
-        const label = document.createElement("label");
-        label.textContent = labelText;
-        const textarea = document.createElement("textarea");
-        textarea.value = value || "";
-        textarea.addEventListener("input", () => onChange(textarea.value));
-        label.appendChild(textarea);
-        return label;
-      }
-
-      function addPresetRow() {
-        if (!state.config) {
-          state.config = { version: 1, options: { allowAdhocFilters: true }, presets: [] };
-        }
-        state.config.presets.push({
-          id: "",
-          description: "",
-          includeGlobs: [],
-          excludeGlobs: [],
-          extensions: [],
-          pathPrefixes: []
-        });
-        renderPresetEditor();
-      }
-
-      async function saveConfig() {
-        const selected = currentSelection();
-        if (!selected) {
-          throw new Error("Owner and repository are required.");
-        }
-        if (!state.config) {
-          throw new Error("No configuration loaded. Load config from the Download tab first.");
-        }
-
-        state.config.version = 1;
-        if (!state.config.options) {
-          state.config.options = {};
-        }
-        const maxSafeInteger = Number.MAX_SAFE_INTEGER;
-        state.config.options.allowAdhocFilters = nodes.allowAdhocFilters.checked;
-        state.config.options.maxFilesPerDownload = parseLimitInput(nodes.maxFilesPerDownload.value, "Max files per download", maxSafeInteger);
-        state.config.options.maxBytesPerDownload = parseLimitInput(nodes.maxBytesPerDownload.value, "Max bytes per download", maxSafeInteger);
-        state.config.presets = state.config.presets || [];
-
-        const seen = new Set();
-        for (const preset of state.config.presets) {
-          const id = (preset.id || "").trim();
-          if (!id) {
-            throw new Error("Preset IDs must not be empty.");
-          }
-          if (seen.has(id)) {
-            throw new Error("Preset IDs must be unique.");
-          }
-          seen.add(id);
-          preset.id = id;
-          preset.description = (preset.description || "").trim();
-          preset.includeGlobs = splitList(joinList(preset.includeGlobs));
-          preset.excludeGlobs = splitList(joinList(preset.excludeGlobs));
-          preset.extensions = splitList(joinList(preset.extensions));
-          preset.pathPrefixes = splitList(joinList(preset.pathPrefixes));
-        }
-
-        const endpoint = "/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/config";
-        await apiFetch(endpoint, {
-          method: "PUT",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ref: selected.ref || "main",
-            config: state.config,
-            commitMessage: "chore(zip-forger): update .zip-forger.yaml"
-          })
-        });
-
-        setMessage("Config saved.", "ok");
-        await loadConfig();
-      }
-
-      /* ---- Preview & Download ---- */
       async function previewSelection() {
-        const selected = currentSelection();
-        if (!selected) {
-          throw new Error("Owner and repository are required.");
+        const full = nodes.repo.value.trim();
+        const parts = full.split("/");
+        if (parts.length < 2) return;
+        
+        state.busy = true;
+        nodes.previewBtn.disabled = true;
+        nodes.message.textContent = "Requesting preview...";
+        
+        try {
+          // Resolve commit first to start progress tracking correctly
+          const res = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches");
+          const commit = nodes.ref.value || (res.branches && res.branches[0]) || "main";
+          
+          startProgressTracking(parts[0], parts[1], commit);
+          
+          const payload = await apiFetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ref: nodes.ref.value,
+              preset: nodes.preset.value,
+              adhoc: {
+                includeGlobs: nodes.includeGlobs.value.split("\n").filter(Boolean),
+                excludeGlobs: nodes.excludeGlobs.value.split("\n").filter(Boolean),
+                extensions: nodes.extensions.value.split(",").map(s => s.trim()).filter(Boolean),
+                pathPrefixes: nodes.prefixes.value.split(",").map(s => s.trim()).filter(Boolean)
+              }
+            })
+          });
+          state.preview = payload;
+          nodes.commitValue.textContent = payload.commit.substring(0,8);
+          nodes.filesValue.textContent = payload.selectedFiles.toLocaleString();
+          nodes.bytesValue.textContent = formatBytes(payload.totalBytes);
+          nodes.treeView.textContent = (payload.entries || []).join("\n");
+          nodes.downloadBtn.disabled = false;
+          nodes.message.textContent = "Ready.";
+          updateRepoSummary();
+        } catch (e) {
+          nodes.message.textContent = e.message;
+        } finally {
+          stopProgressTracking();
+          state.busy = false;
+          nodes.previewBtn.disabled = false;
         }
+      }
 
-        const body = {
-          ref: selected.ref,
-          preset: nodes.preset.value || ""
-        };
-        if (nodes.useAdhoc.checked) {
-          body.adhoc = readAdhoc();
-        }
+      function formatBytes(b) {
+        if (b < 1024) return b + " B";
+        const units = ["KB", "MB", "GB"];
+        let i = -1;
+        do { b /= 1024; i++; } while (b > 1024 && i < units.length - 1);
+        return b.toFixed(2) + " " + units[i];
+      }
 
-        const endpoint = "/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/preview";
-        const payload = await apiFetch(endpoint, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".tab-btn, .tab-panel").forEach(el => el.classList.remove("active"));
+          btn.classList.add("active");
+          document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
         });
+      });
 
-        state.preview = payload;
-        nodes.commitValue.textContent = payload.commit || "\u2014";
-        nodes.filesValue.textContent = String(payload.selectedFiles || 0);
-        nodes.bytesValue.textContent = formatBytes(payload.totalBytes || 0);
-        renderTree(payload.entries || [], !!payload.entriesTruncated);
-        setMessage("Preview ready" + (payload.fromCache ? " (cached)." : "."), "ok");
-      }
+      nodes.previewBtn.addEventListener("click", previewSelection);
+      nodes.repo.addEventListener("input", () => {
+        const q = nodes.repo.value;
+        if (q.length < 2) return;
+        fetch("/api/repos/search?q=" + encodeURIComponent(q)).then(r => r.json()).then(data => {
+          nodes.repoOptions.innerHTML = (data.repos || []).map(r => '<option value="' + r + '">').join("");
+        });
+      });
 
-      function renderTree(paths, truncated) {
-        if (!paths.length) {
-          nodes.treeView.innerHTML = '<span class="tree-empty">No files matched your filters. Try adjusting your preset or ad-hoc filter settings.</span>';
-          nodes.treeHint.textContent = "";
-          return;
-        }
-        const lines = compactTreeLines(paths);
-        nodes.treeView.textContent = lines.join("\n");
-        nodes.treeHint.textContent = truncated
-          ? "List truncated to first 2,000 entries."
-          : "";
-      }
+      nodes.repo.addEventListener("change", () => {
+        const parts = nodes.repo.value.split("/");
+        if (parts.length < 2) return;
+        fetch("/api/repos/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/branches")
+          .then(r => r.json()).then(data => {
+            nodes.branchOptions.innerHTML = (data.branches || []).map(b => '<option value="' + b + '">').join("");
+          });
+        updateRepoSummary();
+      });
 
-      function compactTreeLines(paths) {
-        const sorted = paths.slice().sort();
-        const lines = [];
-        let previous = [];
-        for (const filePath of sorted) {
-          const parts = filePath.split("/");
-          let common = 0;
-          while (common < previous.length && common < parts.length && previous[common] === parts[common]) {
-            common += 1;
-          }
-          for (let i = common; i < parts.length; i++) {
-            const isDir = i < parts.length - 1;
-            lines.push("  ".repeat(i) + parts[i] + (isDir ? "/" : ""));
-          }
-          previous = parts;
-        }
-        return lines;
-      }
-
-      function triggerDownload() {
-        if (!state.preview) {
-          setMessage("Run a preview first.", "err");
-          return;
-        }
-        const selected = currentSelection();
-        if (!selected) {
-          setMessage("Owner and repository are required.", "err");
-          return;
-        }
-        window.location.assign(buildDownloadPath(selected));
-      }
-
-      async function copyShareURL() {
-        const value = nodes.shareUrl.value;
-        if (!value) return;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(value);
+      fetch("/auth/me").then(r => r.json()).then(data => {
+        if (data.authenticated) {
+          nodes.authBadge.textContent = "signed in";
+          nodes.authBadge.classList.add("state-signed-in");
+          nodes.logoutBtn.hidden = false;
         } else {
-          nodes.shareUrl.focus();
-          nodes.shareUrl.select();
-          document.execCommand("copy");
+          nodes.authBadge.textContent = "not signed in";
+          nodes.loginBtn.hidden = false;
         }
-        setMessage("URL copied.", "ok");
-      }
-
-      function updateShareURL() {
-        const selected = currentSelection();
-        if (!selected) {
-          nodes.shareUrl.value = "";
-          return;
-        }
-        nodes.shareUrl.value = window.location.origin + buildDownloadPath(selected);
-      }
-
-      function buildDownloadPath(selected) {
-        const query = new URLSearchParams();
-        if (selected.ref) {
-          query.set("ref", selected.ref);
-        }
-        if (nodes.preset.value) {
-          query.set("preset", nodes.preset.value);
-        }
-        if (nodes.useAdhoc.checked) {
-          const adhoc = readAdhoc();
-          appendEach(query, "include", adhoc.includeGlobs);
-          appendEach(query, "exclude", adhoc.excludeGlobs);
-          appendEach(query, "ext", adhoc.extensions);
-          appendEach(query, "prefix", adhoc.pathPrefixes);
-        }
-        return "/api/repos/" + encodeURIComponent(selected.owner) + "/" + encodeURIComponent(selected.repo) + "/download.zip?" + query.toString();
-      }
-
-      function readAdhoc() {
-        return {
-          includeGlobs: splitList(nodes.includeGlobs.value),
-          excludeGlobs: splitList(nodes.excludeGlobs.value),
-          extensions: splitList(nodes.extensions.value),
-          pathPrefixes: splitList(nodes.prefixes.value)
-        };
-      }
-
-      /* ---- Utilities ---- */
-      function debounce(fn, ms) {
-        let t;
-        return function(...args) { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-      }
-
-      function populateSelect(selectEl, values) {
-        const prev = selectEl.value;
-        selectEl.innerHTML = "";
-        for (const value of values) {
-          const opt = document.createElement("option");
-          opt.value = value;
-          opt.textContent = value;
-          selectEl.appendChild(opt);
-        }
-        if (values.includes(prev)) {
-          selectEl.value = prev;
-        } else if (values.length === 1) {
-          selectEl.value = values[0];
-          selectEl.dispatchEvent(new Event("change"));
-        }
-      }
-
-      function filterSelect(selectEl, query) {
-        const q = query.trim().toLowerCase();
-        for (const opt of selectEl.options) {
-          opt.hidden = q ? !opt.value.toLowerCase().includes(q) : false;
-        }
-        // If currently selected option is now hidden, deselect
-        const sel = selectEl.options[selectEl.selectedIndex];
-        if (sel && sel.hidden) selectEl.value = "";
-      }
-
-      function setDatalist(listNode, values) {
-        listNode.innerHTML = "";
-        for (const value of values) {
-          const option = document.createElement("option");
-          option.value = value;
-          listNode.appendChild(option);
-        }
-      }
-
-      function optionNode(value, label) {
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = label;
-        return option;
-      }
-
-      function splitList(value) {
-        if (Array.isArray(value)) {
-          return value.map((item) => String(item).trim()).filter(Boolean);
-        }
-        return String(value || "")
-          .split(/[\n,]/g)
-          .map((item) => item.trim())
-          .filter(Boolean);
-      }
-
-      function joinList(value) {
-        if (!value) return "";
-        if (Array.isArray(value)) return value.join(", ");
-        return String(value);
-      }
-
-      function appendEach(params, key, values) {
-        for (const value of values) {
-          params.append(key, value);
-        }
-      }
-
-      function formatBytes(bytes) {
-        const units = ["B", "KB", "MB", "GB", "TB"];
-        let size = Number(bytes) || 0;
-        let index = 0;
-        while (size >= 1024 && index < units.length - 1) {
-          size /= 1024;
-          index += 1;
-        }
-        return size.toFixed(index === 0 ? 0 : size < 10 ? 2 : 1) + " " + units[index];
-      }
-
-      function formatLimitValue(value) {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric) || numeric <= 0) return "";
-        return String(Math.floor(numeric));
-      }
-
-      function parseLimitInput(value, fieldName, maxValue) {
-        const trimmed = String(value || "").trim();
-        if (!trimmed) return 0;
-        if (!/^[0-9]+$/.test(trimmed)) {
-          throw new Error(fieldName + " must be a whole number >= 0.");
-        }
-        const parsed = Number(trimmed);
-        if (!Number.isSafeInteger(parsed) || parsed < 0) {
-          throw new Error(fieldName + " must be a whole number >= 0.");
-        }
-        if (parsed > maxValue) {
-          throw new Error(fieldName + " is too large.");
-        }
-        return parsed;
-      }
-
-      function setMessage(text, level) {
-        nodes.message.textContent = text;
-        nodes.message.className = "message" + (level ? " " + level : "");
-      }
-
-      async function apiFetch(url, options) {
-        const response = await fetch(url, options);
-        const text = await response.text();
-        let payload = {};
-        if (text) {
-          try {
-            payload = JSON.parse(text);
-          } catch (_err) {
-            payload = {};
-          }
-        }
-        if (!response.ok) {
-          const message = payload && payload.error && payload.error.message
-            ? payload.error.message
-            : ("request failed with HTTP " + response.status);
-          throw new Error(message);
-        }
-        return payload;
-      }
+      });
     })();
   </script>
 </body>
